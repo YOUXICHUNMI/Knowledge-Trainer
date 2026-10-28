@@ -116,9 +116,9 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **662 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15 + 深色主题 15） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **663 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15 + 深色主题 16） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
-| 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 70 张，含真实 B 类题库附图与 16 张深色 |
+| 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 74 张，含真实 B 类题库附图与 20 张深色 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
 | 坏包回归（Skill 副本） | `python tools/qbank-authoring-skill/scripts/tests/run_bad_packages.py` | 49 passed / 0 failed |
 | Skill 自检 | `python tools/qbank-authoring-skill/scripts/selfcheck.py` | 44 passed / 0 failed |
@@ -158,7 +158,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，662 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，663 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -474,6 +474,12 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 
 ### 17. 练习页：修好一个点不到的按钮，然后让它能用手回答
 
+> 补记（做深色时顺手遇上）：`PracticeKeyboardGestureTest` 原来从 `SampleBank` 里**随机抽题**，
+> 而示例题库混着简答题 —— 抽到简答时"按 A 选中第一个选项"这件事无从谈起，
+> 断言 `options.size >= 2` 就红了。它一直是靠运气绿的：抽样随机，跑十次有两三次能撞上。
+> 改成自带三道单选的固定题库。教训：**接线测试的输入必须确定**，
+> 需要随机的是产品，不是测试；"偶发失败"从来不是玄学，是有一半的情况没被想到。
+
 这一节是两件事，但它们同源 —— 都出在「界面自己另写一份规则」。
 
 **先是一个真缺陷。** 提交栏自己算「有没有答案」，只认 `selectedOptionIds`；而重组题
@@ -513,7 +519,7 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 提示只在有物理键盘的设备上显示（`Platform.hasPhysicalKeyboard`，Android / iOS 为 false）：
 手机上写「按 A 选择」，只会让人到处找按键。
 
-662 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
+663 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
 `:androidApp:compileDebugKotlin` 均通过。
 
 ### 18. 深色主题：把「只有浅色」这条限制消掉
@@ -528,7 +534,7 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | 硬编码清零 | Hero 的浅紫、题库头像四组渐变、日历四档热度、顶部晕染、进度条渐变全部收进令牌；`theme/` 之外已搜不到 `Color(0x` |
 | 持久化 | 新增 `application/port/Preferences.kt` + `JsonPreferencesRepository`（`prefs-v1.json`）。放在数据目录里，于是天然进 `.qbk` 备份 |
 | 切换 | `AppContent` 用 `key(dark)` 包住整棵树 |
-| 用例 | 647 → **662**（对比度 4 / 控制器 8 / 接线 1 / 深色截图 1 / 防手滑扫描 1） |
+| 用例 | 647 → **663**（对比度 4 / 控制器 8 / 接线 1 / 深色截图 2 / 防手滑扫描 1） |
 
 三条值得记下来的：
 
@@ -553,16 +559,20 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
    把截图放大才确认。改成 `Muted` 当边（浅 5.2 / 深 6.9，与 Material 自己的未选中勾选框一致），
    并把 `muted/panelMuted` 加进对比度清单 —— 这条规则不只管这一个方块。
 
-深色**逐张看过**的截图（16 张全部拍，看了 14 张）：
+深色**逐张看过**的截图（20 张全部拍，看了 18 张）：
 `55-home-dark`、`56-practice-feedback-dark`、`57-home-dark-phone`（420dp 手机宽度，胶囊不挤标题）、
 `58-history-dark`（判定色同框）、`59-toolbox-dark`（计算器键盘）、`60-import-dark`、
 `61-question-editor-dark`（第 4 条就是在这里发现的）、`62-notes-dark`、`64-graph-dark`、
-`65-extensions-dark`、`66-ai-dark`、`67-backup-dark`、`69-summary-dark`、`70-standard-dark`。
+`65-extensions-dark`、`66-ai-dark`、`67-backup-dark`（空状态）、`69-summary-dark`、`70-standard-dark`、
+`71-backup-overview-dark`、`72-backup-encrypt-dark`、`73-backup-exported-dark`、`74-backup-restore-dark`。
 没看的两张是 `63-note-editor-dark` 与 `68-wrong-dark`（前者与 `19-note-editor-formula` 同源，
 后者与 `58-history-dark` 共用判定色）—— 如实写在这里，而不是藏在「已全面支持深色」后面。
 
-还有一句得说明：`67-backup-dark` 用的仍是内存存储，拍到的是「这个平台没有可备份的数据」那一屏 ——
-深色下的备份**主界面**（导出、加密、恢复）还是只有浅色截图。
+**备份主界面那份债已经还了**：`renderBackup()` 的准备代码抽成 `backupFixture()`（真实临时目录 +
+一个题库 + 一条历史），浅色与深色共用同一份 —— 这一页的每句话都挂在真实数字上（几个题库、
+多少文件、多大），假数据拍出来没有核对价值。新增 `renderBackupDark`：总览、加密口令、刚导出、
+恢复预览四张。顺带发现的坑：加密开着的时候导出卡片高出一大截，恢复预览被推到画面外面 ——
+所以恢复那张先把开关关掉再导出（与浅色那套的顺序一致）。
 
 ## 已知限制（P10 之后仍然成立）
 
@@ -574,12 +584,11 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 662 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 663 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 | 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
-| 深色有 2 张截图没看 | 16 张深色截图看了 14 张，`63-note-editor-dark` 与 `68-wrong-dark` 没看 |
-| 深色的备份主界面没看过 | 测试用内存存储，`67-backup-dark` 只拍到「没有可备份的数据」那一屏；导出 / 加密 / 恢复的深色未核对 |
+| 深色有 2 张截图没看 | 20 张深色截图看了 18 张，`63-note-editor-dark` 与 `68-wrong-dark` 没看 |
 | 深色下 Hero 主按钮仍是白底 | "纸上一块白"是刻意的层次；代价是它的字色 `HeroActionInk` 必须固定，不跟着主题走 |
 | 浅色的 `Faint` 只有 2.95:1 | 它只用于计数、脚注这类提示级文字，不承担正文；深色下同一项是 4.46:1 |
 | 换主题时整棵树重建 | 滚动位置与局部展开状态会重置（切主题是低频动作，换来的是"一处定义、处处跟随"） |
@@ -595,5 +604,6 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
    所以只能 `jvm`/`android`/`ios` 走 SQLite、`js`/`wasm` 继续文件或内存，端口得先长出查询语义
    （现在 `TextStorage` 只会读整份文本，而 SQLite 的价值恰恰在"只读需要的部分"）。
    真做之前先补一次基线：用 `KT_BENCH=1` 重跑十万题，把开工前的数字写下来。
-4. **深色下的备份主界面**：现在 `67-backup-dark` 只拍到「这个平台没有可备份的数据」，
-   因为截图测试用的是内存存储。给备份页造一个带数据目录的假环境，把导出 / 加密 / 恢复三屏也拍成深色。
+4. **给深色加一道自动护栏**：现在 20 张深色截图全靠人工看，漏网的「某块还是浅色的」没人拦。
+   可行做法：把 `shot()` 加一个 `dark` 参数，渲染完成后缩到 1/8 取样，一旦出现成片的近白区域
+   （文字本身是浅色，缩采样后才分得清"字"和"面"）就失败 —— 首页的白色主按钮要单独豁免。
