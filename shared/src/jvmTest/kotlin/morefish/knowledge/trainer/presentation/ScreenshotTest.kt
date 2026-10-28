@@ -2,6 +2,7 @@ package morefish.knowledge.trainer.presentation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.Density
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,9 @@ import morefish.knowledge.trainer.domain.tools.Units
 import morefish.knowledge.trainer.infrastructure.archive.Sha256
 import morefish.knowledge.trainer.application.port.ChoiceMapping
 import morefish.knowledge.trainer.application.port.ThemeMode
+import morefish.knowledge.trainer.presentation.theme.DarkScheme
+import morefish.knowledge.trainer.presentation.theme.Palette
+import morefish.knowledge.trainer.presentation.theme.assertNoLightBlocksOnDark
 import morefish.knowledge.trainer.infrastructure.storage.JsonGraphRepository
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxTab
 import morefish.knowledge.trainer.presentation.toolbox.ConvPicker
@@ -1340,7 +1344,7 @@ class ScreenshotTest {
         controller.refresh()
         controller.theme.set(ThemeMode.DARK)
 
-        shot("55-home-dark") { AppContent(controller) }
+        shot("55-home-dark", allowLightBlocks = true) { AppContent(controller) }
 
         shot("56-practice-feedback-dark") {
             controller.startPractice(imported, questionCount = 3)
@@ -1356,7 +1360,7 @@ class ScreenshotTest {
         }
 
         // 手机宽度：标题右侧多了主题胶囊，最容易被挤掉的正是副标题
-        shot("57-home-dark-phone", height = 900, width = 420) {
+        shot("57-home-dark-phone", height = 900, width = 420, allowLightBlocks = true) {
             controller.goHome()
             AppContent(controller)
         }
@@ -1453,10 +1457,15 @@ class ScreenshotTest {
         }
     }
 
+    /**
+     * @param allowLightBlocks 首页 Hero 上那颗**白色**主按钮是刻意的，那一屏要放行；
+     *   除此之外的深色页里出现成片浅色，基本都是"某块忘了换令牌"。
+     */
     private fun shot(
         name: String,
         height: Int = 960,
         width: Int = 1180,
+        allowLightBlocks: Boolean = false,
         content: @Composable () -> Unit,
     ) {
         val scene = ImageComposeScene(
@@ -1475,8 +1484,15 @@ class ScreenshotTest {
             val image = scene.render(nanos)
             val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("PNG 编码失败：$name")
             File(outDir, "$name.png").writeBytes(data.bytes)
+            // 先落盘再断言：万一真的漏了浅色块，图已经写好了，可以立刻打开看是哪一块
+            // 判断"这是不是深色页"不能看左上角像素：顶栏自己就是一块纸面，被改成白之后
+            // 反而会被当成浅色页跳过。用真正决定配色的那个值。
+            if (!allowLightBlocks && Palette.current === DarkScheme) {
+                assertNoLightBlocksOnDark(name, image.toComposeImageBitmap())
+            }
         } finally {
             scene.close()
         }
     }
+
 }
