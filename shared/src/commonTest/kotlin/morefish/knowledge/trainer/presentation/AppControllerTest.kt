@@ -1,5 +1,6 @@
 package morefish.knowledge.trainer.presentation
 
+import morefish.knowledge.trainer.presentation.toolbox.ConvPicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -416,47 +417,47 @@ class AppControllerTest {
     fun calculatorKeepsOnlySuccessfulCalculationsInHistory() = runTest {
         val c = controller(InMemoryTextStorage(), testScheduler)
 
-        c.appendCalc("1+2*3")
-        assertEquals("1+2*3", c.calcExpression)
-        c.commitCalc()
-        assertEquals(1, c.calcHistory.size)
-        assertEquals("1+2*3", c.calcHistory.single().expression)
-        assertEquals("7", c.calcHistory.single().result)
+        c.toolbox.append("1+2*3")
+        assertEquals("1+2*3", c.toolbox.expression)
+        c.toolbox.commit()
+        assertEquals(1, c.toolbox.history.size)
+        assertEquals("1+2*3", c.toolbox.history.single().expression)
+        assertEquals("7", c.toolbox.history.single().result)
 
         // 算不出来时保留算式、只报错，并且不往记录里塞一条失败的
-        c.appendCalc("/0")
-        c.commitCalc()
-        assertEquals(1, c.calcHistory.size)
-        assertTrue(c.calcCommitted is CalcOutcome.Failure)
+        c.toolbox.append("/0")
+        c.toolbox.commit()
+        assertEquals(1, c.toolbox.history.size)
+        assertTrue(c.toolbox.committed is CalcOutcome.Failure)
 
         // 继续编辑就该清掉上一次的结论，否则旧结果看起来像新算式的答案
-        c.backspaceCalc()
-        assertNull(c.calcCommitted)
-        assertEquals("1+2*3/", c.calcExpression)
+        c.toolbox.backspace()
+        assertNull(c.toolbox.committed)
+        assertEquals("1+2*3/", c.toolbox.expression)
 
-        c.clearCalc()
-        assertEquals("", c.calcExpression)
-        assertNull(c.calcLive, "空算式不该有实时结果")
+        c.toolbox.clear()
+        assertEquals("", c.toolbox.expression)
+        assertNull(c.toolbox.live, "空算式不该有实时结果")
     }
 
     @Test
     fun calculatorHistoryIsReusableAndBounded() = runTest {
         val c = controller(InMemoryTextStorage(), testScheduler)
         repeat(25) { index ->
-            c.clearCalc()
-            c.appendCalc("$index+1")
-            c.commitCalc()
+            c.toolbox.clear()
+            c.toolbox.append("$index+1")
+            c.toolbox.commit()
         }
-        assertEquals(20, c.calcHistory.size, "记录上限 20 条，超出丢最旧的")
-        assertEquals("24+1", c.calcHistory.first().expression)
-        assertEquals("25", c.calcHistory.first().result)
+        assertEquals(20, c.toolbox.history.size, "记录上限 20 条，超出丢最旧的")
+        assertEquals("24+1", c.toolbox.history.first().expression)
+        assertEquals("25", c.toolbox.history.first().result)
 
-        c.useCalcRecord(c.calcHistory.first())
-        assertEquals("24+1", c.calcExpression)
-        assertNull(c.calcCommitted)
+        c.toolbox.useRecord(c.toolbox.history.first())
+        assertEquals("24+1", c.toolbox.expression)
+        assertNull(c.toolbox.committed)
 
-        c.clearCalcHistory()
-        assertTrue(c.calcHistory.isEmpty())
+        c.toolbox.clearHistory()
+        assertTrue(c.toolbox.history.isEmpty())
     }
 
     @Test
@@ -510,31 +511,31 @@ class AppControllerTest {
     @Test
     fun unitConversionStateFollowsDimensionAndSwap() = runTest {
         val c = controller(InMemoryTextStorage(), testScheduler)
-        assertEquals(Dimension.LENGTH, c.convDimension)
-        assertEquals("m", c.convFromId)
+        assertEquals(Dimension.LENGTH, c.toolbox.dimension)
+        assertEquals("m", c.toolbox.fromId)
 
-        c.updateConvInput("2.5")
-        val outcome = c.convOutcome
+        c.toolbox.updateInput("2.5")
+        val outcome = c.toolbox.conversion
         assertTrue(outcome is Conversion.Ok)
         assertEquals("250", outcome.display)
 
-        c.swapConvUnits()
-        assertEquals("cm", c.convFromId)
-        assertEquals("m", c.convToId)
+        c.toolbox.swap()
+        assertEquals("cm", c.toolbox.fromId)
+        assertEquals("m", c.toolbox.toId)
 
-        c.selectConvDimension(Dimension.MASS)
-        assertEquals("kg", c.convFromId)
-        assertEquals("g", c.convToId)
+        c.toolbox.selectDimension(Dimension.MASS)
+        assertEquals("kg", c.toolbox.fromId)
+        assertEquals("g", c.toolbox.toId)
 
         // 把「到」设成和「从」同一个单位没有意义，应当被忽略
-        c.toggleConvPicker(ConvPicker.TO)
-        c.selectConvUnit(assertNotNull(Units.resolve("kg")))
-        assertEquals("kg", c.convFromId)
-        assertEquals("g", c.convToId)
-        assertEquals(ConvPicker.NONE, c.convPicker)
+        c.toolbox.togglePicker(ConvPicker.TO)
+        c.toolbox.selectUnit(assertNotNull(Units.resolve("kg")))
+        assertEquals("kg", c.toolbox.fromId)
+        assertEquals("g", c.toolbox.toId)
+        assertEquals(ConvPicker.NONE, c.toolbox.picker)
 
-        c.updateConvInput("不是数字")
-        assertNull(c.convOutcome)
+        c.toolbox.updateInput("不是数字")
+        assertNull(c.toolbox.conversion)
     }
 
     // ---- 知识图谱 ----

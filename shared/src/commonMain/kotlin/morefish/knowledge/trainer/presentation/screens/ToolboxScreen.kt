@@ -37,10 +37,10 @@ import morefish.knowledge.trainer.domain.tools.UnitDef
 import morefish.knowledge.trainer.domain.tools.UnitPrecision
 import morefish.knowledge.trainer.domain.tools.Units
 import morefish.knowledge.trainer.domain.tools.formatNumber
+import morefish.knowledge.trainer.presentation.toolbox.ToolboxTab
+import morefish.knowledge.trainer.presentation.toolbox.ConvPicker
+import morefish.knowledge.trainer.presentation.toolbox.CalcRecord
 import morefish.knowledge.trainer.presentation.AppController
-import morefish.knowledge.trainer.presentation.CalcRecord
-import morefish.knowledge.trainer.presentation.ConvPicker
-import morefish.knowledge.trainer.presentation.ToolboxTab
 import morefish.knowledge.trainer.presentation.theme.Palette
 import morefish.knowledge.trainer.presentation.ui.Divider
 import morefish.knowledge.trainer.presentation.ui.GhostButton
@@ -62,7 +62,7 @@ import morefish.knowledge.trainer.presentation.ui.pressScale
 fun ToolboxScreen(controller: AppController) {
     ScreenScaffold(
         title = "工具箱",
-        subtitle = "${controller.toolboxTab.hint} · 全部在本机完成",
+        subtitle = "${controller.toolbox.tab.hint} · 全部在本机完成",
         overline = "学习台",
         onBack = controller::closeToolbox,
     ) {
@@ -73,15 +73,15 @@ fun ToolboxScreen(controller: AppController) {
             ToolboxTab.entries.forEach { tab ->
                 KtChip(
                     label = tab.label,
-                    selected = controller.toolboxTab == tab,
-                    onClick = { controller.selectToolboxTab(tab) },
+                    selected = controller.toolbox.tab == tab,
+                    onClick = { controller.toolbox.selectTab(tab) },
                 )
             }
         }
 
         Spacer(Modifier.height(14.dp))
 
-        when (controller.toolboxTab) {
+        when (controller.toolbox.tab) {
             ToolboxTab.CALCULATOR -> CalculatorPane(controller)
             ToolboxTab.UNITS -> UnitPane(controller)
         }
@@ -101,8 +101,8 @@ private fun CalculatorPane(controller: AppController) {
             AngleMode.entries.forEach { mode ->
                 KtChip(
                     label = mode.label,
-                    selected = controller.calcAngleMode == mode,
-                    onClick = { controller.selectCalcAngleMode(mode) },
+                    selected = controller.toolbox.angleMode == mode,
+                    onClick = { controller.toolbox.selectAngleMode(mode) },
                 )
                 Spacer(Modifier.width(6.dp))
             }
@@ -110,8 +110,8 @@ private fun CalculatorPane(controller: AppController) {
 
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = controller.calcExpression,
-            onValueChange = controller::updateCalcExpression,
+            value = controller.toolbox.expression,
+            onValueChange = controller.toolbox::updateExpression,
             placeholder = { Text("例如 (3+4)×2^3、sqrt(2)·sin(30)、或 1/3", maxLines = 1, overflow = TextOverflow.Ellipsis) },
             singleLine = true,
             textStyle = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
@@ -127,7 +127,7 @@ private fun CalculatorPane(controller: AppController) {
         )
 
         Spacer(Modifier.height(14.dp))
-        ResultBlock(controller.calcOutcome, controller.calcCommitted != null)
+        ResultBlock(controller.toolbox.outcome, controller.toolbox.committed != null)
 
         Spacer(Modifier.height(8.dp))
         Text(
@@ -141,7 +141,7 @@ private fun CalculatorPane(controller: AppController) {
     Spacer(Modifier.height(12.dp))
     Keypad(controller)
 
-    if (controller.calcHistory.isNotEmpty()) {
+    if (controller.toolbox.history.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
         HistoryPanel(controller)
     }
@@ -237,10 +237,10 @@ private fun Keypad(controller: AppController) {
                 row.forEach { key ->
                     KeyCap(key, Modifier.weight(1f)) {
                         when (val action = key.action) {
-                            is KeyAction.Insert -> controller.appendCalc(action.text)
-                            KeyAction.Backspace -> controller.backspaceCalc()
-                            KeyAction.Clear -> controller.clearCalc()
-                            KeyAction.Equals -> controller.commitCalc()
+                            is KeyAction.Insert -> controller.toolbox.append(action.text)
+                            KeyAction.Backspace -> controller.toolbox.backspace()
+                            KeyAction.Clear -> controller.toolbox.clear()
+                            KeyAction.Equals -> controller.toolbox.commit()
                         }
                     }
                 }
@@ -289,12 +289,12 @@ private fun HistoryPanel(controller: AppController) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SectionTitle("计算记录", "本次打开应用期间")
             Spacer(Modifier.weight(1f))
-            GhostButton("清空", onClick = controller::clearCalcHistory)
+            GhostButton("清空", onClick = controller.toolbox::clearHistory)
         }
         Spacer(Modifier.height(4.dp))
-        controller.calcHistory.forEachIndexed { index, record ->
+        controller.toolbox.history.forEachIndexed { index, record ->
             if (index > 0) Divider(color = Palette.PanelBorder)
-            RecordRow(record) { controller.useCalcRecord(record) }
+            RecordRow(record) { controller.toolbox.useRecord(record) }
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -346,8 +346,8 @@ private fun UnitPane(controller: AppController) {
         Dimension.entries.forEach { dimension ->
             KtChip(
                 label = dimension.label,
-                selected = controller.convDimension == dimension,
-                onClick = { controller.selectConvDimension(dimension) },
+                selected = controller.toolbox.dimension == dimension,
+                onClick = { controller.toolbox.selectDimension(dimension) },
             )
         }
     }
@@ -357,8 +357,8 @@ private fun UnitPane(controller: AppController) {
     Panel(padding = 18.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
-                value = controller.convInput,
-                onValueChange = controller::updateConvInput,
+                value = controller.toolbox.input,
+                onValueChange = controller.toolbox::updateInput,
                 label = { Text("数值") },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace),
@@ -373,29 +373,29 @@ private fun UnitPane(controller: AppController) {
                 ),
             )
             Spacer(Modifier.width(10.dp))
-            GhostButton("⇅ 交换", onClick = controller::swapConvUnits)
+            GhostButton("⇅ 交换", onClick = controller.toolbox::swap)
         }
 
         Spacer(Modifier.height(12.dp))
         UnitSelector(
             label = "从",
-            unit = controller.convFrom,
-            expanded = controller.convPicker == ConvPicker.FROM,
-            onToggle = { controller.toggleConvPicker(ConvPicker.FROM) },
+            unit = controller.toolbox.from,
+            expanded = controller.toolbox.picker == ConvPicker.FROM,
+            onToggle = { controller.toolbox.togglePicker(ConvPicker.FROM) },
         )
         Spacer(Modifier.height(8.dp))
         UnitSelector(
             label = "到",
-            unit = controller.convTo,
-            expanded = controller.convPicker == ConvPicker.TO,
-            onToggle = { controller.toggleConvPicker(ConvPicker.TO) },
+            unit = controller.toolbox.to,
+            expanded = controller.toolbox.picker == ConvPicker.TO,
+            onToggle = { controller.toolbox.togglePicker(ConvPicker.TO) },
         )
 
         Spacer(Modifier.height(14.dp))
-        ConversionResult(controller.convOutcome, controller.convInput, controller.convTo)
+        ConversionResult(controller.toolbox.conversion, controller.toolbox.input, controller.toolbox.to)
     }
 
-    if (controller.convPicker != ConvPicker.NONE) {
+    if (controller.toolbox.picker != ConvPicker.NONE) {
         Spacer(Modifier.height(10.dp))
         UnitPickerList(controller)
     }
@@ -516,21 +516,21 @@ private fun ConversionResult(outcome: Conversion?, input: String, to: UnitDef) {
 
 @Composable
 private fun UnitPickerList(controller: AppController) {
-    val targetLabel = if (controller.convPicker == ConvPicker.FROM) "从" else "到"
+    val targetLabel = if (controller.toolbox.picker == ConvPicker.FROM) "从" else "到"
     Panel(padding = 12.dp, background = Palette.PanelMuted) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle("选择单位 · $targetLabel", controller.convDimension.label)
+            SectionTitle("选择单位 · $targetLabel", controller.toolbox.dimension.label)
             Spacer(Modifier.weight(1f))
-            GhostButton("取消", onClick = { controller.toggleConvPicker(controller.convPicker) })
+            GhostButton("取消", onClick = { controller.toolbox.togglePicker(controller.toolbox.picker) })
         }
         Spacer(Modifier.height(8.dp))
-        controller.convUnits.forEach { unit ->
-            val selected = if (controller.convPicker == ConvPicker.FROM) {
-                unit.id == controller.convFromId
+        controller.toolbox.units.forEach { unit ->
+            val selected = if (controller.toolbox.picker == ConvPicker.FROM) {
+                unit.id == controller.toolbox.fromId
             } else {
-                unit.id == controller.convToId
+                unit.id == controller.toolbox.toId
             }
-            UnitRow(unit, selected) { controller.selectConvUnit(unit) }
+            UnitRow(unit, selected) { controller.toolbox.selectUnit(unit) }
         }
     }
 }
@@ -579,8 +579,8 @@ private fun UnitRow(unit: UnitDef, selected: Boolean, onClick: () -> Unit) {
 /** 常见对照：以 1 个「从」单位为准，把同维度其他单位列几行，省得反复切换。 */
 @Composable
 private fun ReferenceTable(controller: AppController) {
-    val from = controller.convFrom
-    val others = controller.convUnits
+    val from = controller.toolbox.from
+    val others = controller.toolbox.units
         .filter { it.id != from.id }
         .sortedBy { kotlin.math.abs(kotlin.math.ln(it.factor / from.factor)) }
         .take(5)

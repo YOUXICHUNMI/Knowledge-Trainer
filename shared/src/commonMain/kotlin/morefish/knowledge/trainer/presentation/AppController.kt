@@ -123,14 +123,7 @@ import morefish.knowledge.trainer.domain.practice.PracticeScope
 import morefish.knowledge.trainer.domain.practice.QuestionKey
 import morefish.knowledge.trainer.domain.practice.StudyCalendar
 import morefish.knowledge.trainer.domain.practice.StudyStats
-import morefish.knowledge.trainer.domain.tools.AngleMode
-import morefish.knowledge.trainer.domain.tools.CalcOutcome
-import morefish.knowledge.trainer.domain.tools.Calculator
-import morefish.knowledge.trainer.domain.tools.Conversion
-import morefish.knowledge.trainer.domain.tools.Dimension
-import morefish.knowledge.trainer.domain.tools.UnitDef
-import morefish.knowledge.trainer.domain.tools.Units
-import morefish.knowledge.trainer.domain.tools.parseNumber
+import morefish.knowledge.trainer.presentation.toolbox.ToolboxController
 import morefish.knowledge.trainer.infrastructure.ai.OpenAiCompatibleProvider
 import morefish.knowledge.trainer.application.port.ChoiceMapping
 import morefish.knowledge.trainer.application.port.ImportParseResult
@@ -292,17 +285,6 @@ data class BackupIntake(
 }
 
 /** 工具箱的两个面板。 */
-enum class ToolboxTab(val label: String, val hint: String) {
-    CALCULATOR("计算器", "表达式的每一步都在本机算，不联网"),
-    UNITS("单位换算", "按维度检查，跨维度不换算"),
-}
-
-/** 一次计算的留档。只存在内存里：计算器不是笔记本，关掉就该清空。 */
-data class CalcRecord(val expression: String, val result: String)
-
-/** 单位选择面板当前在给哪一侧选单位。 */
-enum class ConvPicker { NONE, FROM, TO }
-
 /** 图谱编辑器里正在为哪一端搜题。 */
 enum class GraphPickSide { NONE, SOURCE, TARGET }
 
@@ -2379,32 +2361,16 @@ class AppController(
         const val GRAPH_SEARCH_LIMIT = 8
     }
 
-    // ---- 工具箱：计算器 ----
-
-    var toolboxTab by mutableStateOf(ToolboxTab.CALCULATOR)
-        private set
+    // ---- 工具箱 ----
 
     /** 工具箱返回目标：从练习页进来就回练习页，不会把人踢回首页。 */
     private var toolboxReturn by mutableStateOf(Screen.HOME)
 
-    var calcExpression by mutableStateOf("")
-        private set
-
-    var calcAngleMode by mutableStateOf(AngleMode.DEG)
-        private set
-
-    /** 按下「=」之后的结论。继续编辑就清空，避免旧结果看起来像当前算式的答案。 */
-    var calcCommitted by mutableStateOf<CalcOutcome?>(null)
-        private set
-
-    var calcHistory by mutableStateOf<List<CalcRecord>>(emptyList())
-        private set
-
-    /** 编辑过程中的实时结果（只取成功的部分来显示，不拿半截算式报错吓人）。 */
-    val calcLive: CalcOutcome? get() = if (calcExpression.isBlank()) null else Calculator.evaluate(calcExpression, calcAngleMode)
-
-    /** 结果区显示什么：按过「=」就显示那次结论，否则显示实时预览。 */
-    val calcOutcome: CalcOutcome? get() = calcCommitted ?: calcLive
+    /**
+     * 计算器与单位换算的状态与行为在 [ToolboxController] 里。
+     * 这里只留导航：进出工具箱属于路由，不属于工具箱自己。
+     */
+    val toolbox = ToolboxController()
 
     fun openToolbox(from: Screen = screen) {
         if (screen != Screen.TOOLBOX) toolboxReturn = if (from == Screen.PRACTICE) Screen.PRACTICE else from
@@ -2414,121 +2380,6 @@ class AppController(
 
     fun closeToolbox() {
         screen = toolboxReturn
-    }
-
-    fun selectToolboxTab(tab: ToolboxTab) {
-        toolboxTab = tab
-    }
-
-    fun updateCalcExpression(value: String) {
-        calcExpression = value
-        calcCommitted = null
-    }
-
-    /** 键盘输入的字符直接追加到末尾：不做光标插入，行为可预期。 */
-    fun appendCalc(text: String) {
-        calcExpression += text
-        calcCommitted = null
-    }
-
-    fun backspaceCalc() {
-        if (calcExpression.isEmpty()) return
-        calcExpression = calcExpression.dropLast(1)
-        calcCommitted = null
-    }
-
-    fun clearCalc() {
-        calcExpression = ""
-        calcCommitted = null
-    }
-
-    fun selectCalcAngleMode(mode: AngleMode) {
-        calcAngleMode = mode
-        calcCommitted = null
-    }
-
-    /**
-     * 按下「=」：算一次并留档。失败时保留算式、只报错 ——
-     * 清空输入等于把用户刚写的式子扔掉。
-     */
-    fun commitCalc() {
-        val expression = calcExpression.trim()
-        if (expression.isEmpty()) return
-        val outcome = Calculator.evaluate(expression, calcAngleMode)
-        calcCommitted = outcome
-        if (outcome is CalcOutcome.Value) {
-            calcHistory = (listOf(CalcRecord(expression, outcome.display)) + calcHistory).take(MAX_CALC_HISTORY)
-        }
-    }
-
-    fun useCalcRecord(record: CalcRecord) {
-        calcExpression = record.expression
-        calcCommitted = null
-    }
-
-    fun clearCalcHistory() {
-        calcHistory = emptyList()
-    }
-
-    // ---- 工具箱：单位换算 ----
-
-    var convDimension by mutableStateOf(Dimension.LENGTH)
-        private set
-
-    var convFromId by mutableStateOf("m")
-        private set
-
-    var convToId by mutableStateOf("cm")
-        private set
-
-    var convInput by mutableStateOf("1")
-        private set
-
-    var convPicker by mutableStateOf(ConvPicker.NONE)
-        private set
-
-    val convUnits: List<UnitDef> get() = Units.of(convDimension)
-
-    val convFrom: UnitDef get() = Units.byId(convFromId) ?: convUnits.first()
-
-    val convTo: UnitDef get() = Units.byId(convToId) ?: convUnits.last()
-
-    val convOutcome: Conversion?
-        get() {
-            val value = parseNumber(convInput) ?: return null
-            return Units.convert(value, convFrom, convTo)
-        }
-
-    fun selectConvDimension(dimension: Dimension) {
-        convDimension = dimension
-        val units = Units.of(dimension)
-        convFromId = units.first().id
-        convToId = (units.getOrNull(1) ?: units.first()).id
-        convPicker = ConvPicker.NONE
-    }
-
-    fun toggleConvPicker(target: ConvPicker) {
-        convPicker = if (convPicker == target) ConvPicker.NONE else target
-    }
-
-    /** 选择单位时顺带关掉选择面板；选中对面那个单位没有意义，直接忽略。 */
-    fun selectConvUnit(unit: UnitDef) {
-        when (convPicker) {
-            ConvPicker.FROM -> if (unit.id != convToId) convFromId = unit.id
-            ConvPicker.TO -> if (unit.id != convFromId) convToId = unit.id
-            ConvPicker.NONE -> Unit
-        }
-        convPicker = ConvPicker.NONE
-    }
-
-    fun swapConvUnits() {
-        val from = convFromId
-        convFromId = convToId
-        convToId = from
-    }
-
-    fun updateConvInput(value: String) {
-        convInput = value
     }
 
     // ---- 练习设置 ----
@@ -3366,6 +3217,3 @@ class AppController(
  * 这里会换成用户设置项 —— 但"默认练习语言跟随界面语言"的规则不会变。
  */
 internal const val UI_LOCALE: String = "zh-Hans"
-
-/** 计算器留档上限。超过就丢最旧的 —— 内存里的东西不该无限长。 */
-private const val MAX_CALC_HISTORY = 20

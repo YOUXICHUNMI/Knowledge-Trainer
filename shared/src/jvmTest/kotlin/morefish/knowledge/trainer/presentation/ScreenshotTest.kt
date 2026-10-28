@@ -38,6 +38,9 @@ import morefish.knowledge.trainer.domain.tools.Units
 import morefish.knowledge.trainer.infrastructure.archive.Sha256
 import morefish.knowledge.trainer.application.port.ChoiceMapping
 import morefish.knowledge.trainer.infrastructure.storage.JsonGraphRepository
+import morefish.knowledge.trainer.presentation.toolbox.ToolboxTab
+import morefish.knowledge.trainer.presentation.toolbox.ConvPicker
+import morefish.knowledge.trainer.presentation.toolbox.CalcRecord
 import morefish.knowledge.trainer.presentation.theme.KtTheme
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
@@ -363,37 +366,37 @@ class ScreenshotTest {
         controller.openToolbox()
 
         shot("20-toolbox-calculator") {
-            controller.updateCalcExpression("(3+4)×2^3-sqrt(2)")
+            controller.toolbox.updateExpression("(3+4)×2^3-sqrt(2)")
             AppContent(controller)
         }
         // 记录在键盘下方，需要一张更高的图才能看清
         shot("21-toolbox-calculator-history", height = 1240) {
-            controller.clearCalc()
+            controller.toolbox.clear()
             listOf("1/3", "sin(30)", "2^10", "1.5e3*2").forEach { expression ->
-                controller.updateCalcExpression(expression)
-                controller.commitCalc()
+                controller.toolbox.updateExpression(expression)
+                controller.toolbox.commit()
             }
-            controller.updateCalcExpression("(3+4)×2^3-sqrt(2)")
-            controller.commitCalc()
+            controller.toolbox.updateExpression("(3+4)×2^3-sqrt(2)")
+            controller.toolbox.commit()
             AppContent(controller)
         }
         shot("22-toolbox-units") {
-            controller.selectToolboxTab(ToolboxTab.UNITS)
-            controller.selectConvDimension(Dimension.TEMPERATURE)
-            controller.updateConvInput("36.6")
-            controller.toggleConvPicker(ConvPicker.TO)
-            controller.selectConvUnit(requireNotNull(Units.resolve("°F")))
+            controller.toolbox.selectTab(ToolboxTab.UNITS)
+            controller.toolbox.selectDimension(Dimension.TEMPERATURE)
+            controller.toolbox.updateInput("36.6")
+            controller.toolbox.togglePicker(ConvPicker.TO)
+            controller.toolbox.selectUnit(requireNotNull(Units.resolve("°F")))
             AppContent(controller)
         }
         shot("23-toolbox-unit-picker") {
-            controller.toggleConvPicker(ConvPicker.FROM)
+            controller.toolbox.togglePicker(ConvPicker.FROM)
             AppContent(controller)
         }
         shot("24-toolbox-calculator-error") {
-            controller.toggleConvPicker(ConvPicker.FROM)
-            controller.selectToolboxTab(ToolboxTab.CALCULATOR)
-            controller.updateCalcExpression("1/(3-3)")
-            controller.commitCalc()
+            controller.toolbox.togglePicker(ConvPicker.FROM)
+            controller.toolbox.selectTab(ToolboxTab.CALCULATOR)
+            controller.toolbox.updateExpression("1/(3-3)")
+            controller.toolbox.commit()
             AppContent(controller)
         }
     }

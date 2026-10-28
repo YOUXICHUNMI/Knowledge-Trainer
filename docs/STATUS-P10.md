@@ -147,6 +147,45 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `contentDigest` /
 `ordering` 草案），以及"拼错不猜"的枚举规则。
 
+## P10 第二切片（2026-10-28）：把回归交给 CI，开始拆组合根
+
+### 1. CI：清单只维护一份
+
+`.github/workflows/ci.yml` 三个触发面：
+
+| 触发 | 任务 | 内容 |
+|---|---|---|
+| push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，608 用例，失败时上传测试报告 |
+| 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
+
+新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
+坏包、扩展包、补丁、Skill 自检分散在四个目录，靠人记得逐个跑 —— 而"漏跑"和"通过"
+在人眼里长得一样。`--list` 可以只列清单不执行。
+
+同时补了一条以前只在文档里声称的性质：**同一份源目录打包两次，字节完全一致**
+（`tools/verify/check_reproducible.py`，minimal 与 advanced 各打两次比对 sha256）。
+这条一旦破了，`contentDigest` 与补丁锚点就失去意义，因此值得变成断言而不是说明。
+
+### 2. 组合根拆分：第一刀是工具箱
+
+`AppController` 原来 3371 行、约 190 个公开成员，同时干四件事：依赖装配、读模型、
+导航、各功能状态。第一刀切的是唯一与题目/题库**零耦合**的部分：
+
+- 新增 `presentation/toolbox/ToolboxController.kt`（186 行）：计算器与单位换算的状态、
+  实时求值、留档上限，以及只服务于工具箱的 `ToolboxTab` / `CalcRecord` / `ConvPicker`
+  —— 类型跟着使用者走，包边界才对得上；
+- `AppController` 只留导航（`openToolbox` / `closeToolbox` 与返回目标）；
+- 调用方改动 101 处（`ToolboxScreen` 40、`AppControllerTest` 45、`ScreenshotTest` 16），
+  全是 `controller.x` → `controller.toolbox.x`；
+- 文件 3371 → 3219 行，608 用例仍全绿，行为未变。
+
+**没有采用"在组合根留同名转发属性"的做法。** 那样能少改 101 处调用，但会把 190 行胶水
+留在最该变薄的文件里；拆分的意义是让边界可见，不是让 diff 变小。
+
+后续 10 个关注点的切割顺序、三条硬规则（子控制器互不引用 / 只认 domain 与 application /
+每刀测试全绿）与每刀验收清单见 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md)。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
@@ -156,14 +195,14 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | MSI 只在本机试装流程 | 没有在干净虚拟机里完整走"安装 → 运行 → 升级 → 卸载"，升级兼容性只有 `upgradeUuid` 这一层保证 |
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
-| 组合根偏大 | `AppController.kt` 3371 行，同时承担组合与界面状态；P10 没有拆，只保证了它是唯一接触 infrastructure 的界面文件 |
-| 没有 CI | 所有检查都是本机手动跑；`.github/workflows` 不存在，回归靠人记得跑 |
+| 组合根仍偏大 | 已从 3371 行降到 3219 行（工具箱搬出），还有 10 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 608 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 
 ## 下一步建议
 
-1. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 错题；
-2. **拆分 `AppController`**：把组合根（依赖装配）与界面状态分开，给端口化铺路；
-3. **SQLite 存储层**：解决"整库常驻内存 / 改一道题重写整个文件"两个已登记的限制；
-4. **CI**：把 608 个用例、49 条坏包、44 条自检、四份真实题库校验串成一条流水线。
+1. **首次跑通 CI**：push 一次看 `toolchain` 与 `jvm-tests` 是否在 Ubuntu 上绿；重点盯 compileSdk 37；
+2. **继续拆 `AppController`**：按计划第 2–4 刀（历史与日历、练习设置、AI 讲解），每刀单独提交；
+3. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 错题；
+4. **SQLite 存储层**：解决"整库常驻内存 / 改一道题重写整个文件"两个已登记的限制。

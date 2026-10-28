@@ -29,6 +29,17 @@ application 不依赖界面、界面只在组合根接触具体实现，已有�
 产物大小、校验命令与已知限制（release APK 未签名、Android 未上真机等）见
 [docs/STATUS-P10.md](./docs/STATUS-P10.md)。
 
+**回归不再靠人记得跑**：`.github/workflows/ci.yml` 在每次 push / PR 上跑两组必检 ——
+`./gradlew :shared:jvmTest`（608 个用例，含架构验收）与 `python tools/verify/run_all.py`
+（坏包 / 扩展包 / 补丁 / 制包 Skill 自检 / 可复现构建 / 样本包校验，共 12 项）。
+清单只维护一份：本地跑的就是 CI 跑的那一条命令。Android 与桌面打包放在手动触发里，
+因为它们的产物不是每天变，却要拉 SDK 与 WiX。
+
+**组合根正在拆**：`AppController` 曾同时是依赖装配、读模型、导航和所有功能状态。
+现在按关注点往外搬，第一刀是工具箱（`presentation/toolbox/ToolboxController.kt`，
+与题目/题库零耦合，最适合证明"拆分不改行为"）。切割顺序、硬规则与每刀验收见
+[docs/PLAN-APPCONTROLLER.md](./docs/PLAN-APPCONTROLLER.md)。
+
 **大题库**：题库文件按"目录 + 每库一个文件"存放 —— `banks-v1.json` 只记题库元数据（题数、
 题型分布、内容指纹），题目在 `banks/<bankId>/questions-v1.ndjson` 里一行一题。所以打开应用
 不需要解析任何题目（十万题的库：重开 8ms），练习某个库时才读它自己那份文件，写一个库也不会
