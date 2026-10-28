@@ -16,6 +16,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -45,8 +47,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -55,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import morefish.knowledge.trainer.domain.ai.AiRecordState
+import morefish.knowledge.trainer.getPlatform
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.DiffSegment
 import morefish.knowledge.trainer.domain.model.EvaluationDetail
@@ -66,6 +80,10 @@ import morefish.knowledge.trainer.domain.model.SessionItem
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.forQuestion
 import morefish.knowledge.trainer.presentation.AppController
+import morefish.knowledge.trainer.presentation.practice.Keystroke
+import morefish.knowledge.trainer.presentation.practice.PracticeCommand
+import morefish.knowledge.trainer.presentation.practice.PracticeKeyContext
+import morefish.knowledge.trainer.presentation.practice.PracticeKeyboard
 import morefish.knowledge.trainer.presentation.theme.Palette
 import morefish.knowledge.trainer.presentation.richtext.RichText
 import morefish.knowledge.trainer.presentation.ui.BannerHost
@@ -102,85 +120,109 @@ fun PracticeScreen(controller: AppController) {
     val total = session.items.size
     val done = session.cursor + if (feedback != null) 1 else 0
 
-    ScreenScaffold(
-        title = controller.bankTitle(session.bankId),
-        subtitle = buildString {
-            append(session.planLabel.ifBlank { "练习" })
-            append(" · ").append(item.question.type.label)
-            // 多语言题库要说清这一场是哪种语言，否则"题变了"会被当成题库出错
-            controller.practice.sessionLocaleLabel?.let { append(" · ").append(it) }
-            append(" · 已答 ").append(session.answeredCount).append(" / ").append(total)
-        },
-        overline = "第 ${session.cursor + 1} 题 / 共 $total 题",
-        onBack = controller::goHome,
-        progress = if (total == 0) 0f else done.toFloat() / total,
-        trailing = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FavoriteToggle(
-                    active = controller.isFavorite(item.question.questionId),
-                    onClick = { controller.toggleFavorite(item.question) },
-                )
-                SecondaryButton("暂停退出", onClick = controller::pauseAndExit)
-            }
-        },
-    ) {
-        BannerHost(controller.banner, controller::dismissBanner)
+    // 键盘作答。规则本身在 PracticeKeyboard（纯函数，有单测），这里只做两件事：
+    // 把 Compose 的按键拆成 Keystroke、把结论接到控制器上。
+    // 焦点挂在整页这一层：点过按钮或输入框之后，事件仍然从这里过一道 preview，
+    // 否则"点一下选项就再也按不动键盘"。
+    val keyboardFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { keyboardFocus.requestFocus() }
 
-        // 换题时整块内容横向推入，让"翻页"有方向感；同题内作答不触发。
-        AnimatedContent(
-            targetState = item,
-            transitionSpec = {
-                (
-                    fadeIn(tween(Motion.StandardMillis)) +
-                        slideInHorizontally(tween(Motion.EmphasisMillis)) { it / 8 }
-                    ).togetherWith(
-                    fadeOut(tween(Motion.QuickMillis)) +
-                        slideOutHorizontally(tween(Motion.StandardMillis)) { -it / 16 },
-                ).using(SizeTransform(clip = false))
+    Box(
+        Modifier
+            .fillMaxSize()
+            .focusRequester(keyboardFocus)
+            .focusable()
+            .onPreviewKeyEvent { event -> handlePracticeKey(event, controller) },
+    ) {
+        ScreenScaffold(
+            title = controller.bankTitle(session.bankId),
+            subtitle = buildString {
+                append(session.planLabel.ifBlank { "练习" })
+                append(" · ").append(item.question.type.label)
+                // 多语言题库要说清这一场是哪种语言，否则"题变了"会被当成题库出错
+                controller.practice.sessionLocaleLabel?.let { append(" · ").append(it) }
+                append(" · 已答 ").append(session.answeredCount).append(" / ").append(total)
             },
-            label = "question",
-        ) { current ->
-            Column {
-                QuestionCard(current, index = session.items.indexOf(current), total = total, controller = controller)
-                Spacer(Modifier.height(14.dp))
-                AnswerArea(current, controller, feedback != null)
-                // 讲解放在作答之后：没作答就展开，等于把答案提前给出来
-                if (feedback != null) {
+            overline = "第 ${session.cursor + 1} 题 / 共 $total 题",
+            onBack = controller::goHome,
+            progress = if (total == 0) 0f else done.toFloat() / total,
+            trailing = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FavoriteToggle(
+                        active = controller.isFavorite(item.question.questionId),
+                        onClick = { controller.toggleFavorite(item.question) },
+                    )
+                    SecondaryButton("暂停退出", onClick = controller::pauseAndExit)
+                }
+            },
+        ) {
+            BannerHost(controller.banner, controller::dismissBanner)
+
+            // 换题时整块内容横向推入，让"翻页"有方向感；同题内作答不触发。
+            AnimatedContent(
+                targetState = item,
+                transitionSpec = {
+                    (
+                        fadeIn(tween(Motion.StandardMillis)) +
+                            slideInHorizontally(tween(Motion.EmphasisMillis)) { it / 8 }
+                        ).togetherWith(
+                        fadeOut(tween(Motion.QuickMillis)) +
+                            slideOutHorizontally(tween(Motion.StandardMillis)) { -it / 16 },
+                    ).using(SizeTransform(clip = false))
+                },
+                label = "question",
+            ) { current ->
+                Column {
+                    QuestionCard(current, index = session.items.indexOf(current), total = total, controller = controller)
                     Spacer(Modifier.height(14.dp))
-                    AiExplanationPanel(controller)
+                    AnswerArea(current, controller, feedback != null)
+                    // 讲解放在作答之后：没作答就展开，等于把答案提前给出来
+                    if (feedback != null) {
+                        Spacer(Modifier.height(14.dp))
+                        AiExplanationPanel(controller)
+                    }
                 }
             }
-        }
 
-        Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(18.dp))
 
-        // 提交区与反馈区互斥，用展开/收起过渡而不是瞬间替换，
-        // 否则提交那一刻整页会跳一下。
-        AnimatedVisibility(
-            visible = feedback == null,
-            enter = fadeIn(tween(Motion.StandardMillis)) + expandVertically(tween(Motion.EmphasisMillis)),
-            exit = fadeOut(tween(Motion.QuickMillis)) + shrinkVertically(tween(Motion.StandardMillis)),
-        ) {
-            SubmitBar(controller, item)
-        }
+            // 提交区与反馈区互斥，用展开/收起过渡而不是瞬间替换，
+            // 否则提交那一刻整页会跳一下。
+            AnimatedVisibility(
+                visible = feedback == null,
+                enter = fadeIn(tween(Motion.StandardMillis)) + expandVertically(tween(Motion.EmphasisMillis)),
+                exit = fadeOut(tween(Motion.QuickMillis)) + shrinkVertically(tween(Motion.StandardMillis)),
+            ) {
+                SubmitBar(controller, item)
+            }
 
-        AnimatedVisibility(
-            visible = feedback != null,
-            enter = fadeIn(tween(Motion.StandardMillis)) +
-                expandVertically(tween(Motion.EmphasisMillis)) +
-                slideInVertically(tween(Motion.EmphasisMillis)) { it / 10 },
-            exit = fadeOut(tween(Motion.QuickMillis)) + shrinkVertically(tween(Motion.StandardMillis)),
-        ) {
-            Column {
-                FeedbackPanel(controller)
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton(
-                        text = if (session.isLastQuestion) "查看总结" else "下一题",
-                        onClick = controller::next,
-                        leading = null,
-                    )
-                    GhostButton("结束本次", onClick = controller::finish)
+            AnimatedVisibility(
+                visible = feedback != null,
+                enter = fadeIn(tween(Motion.StandardMillis)) +
+                    expandVertically(tween(Motion.EmphasisMillis)) +
+                    slideInVertically(tween(Motion.EmphasisMillis)) { it / 10 },
+                exit = fadeOut(tween(Motion.QuickMillis)) + shrinkVertically(tween(Motion.StandardMillis)),
+            ) {
+                Column {
+                    FeedbackPanel(controller)
+                    Spacer(Modifier.height(14.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PrimaryButton(
+                            text = if (session.isLastQuestion) "查看总结" else "下一题",
+                            onClick = controller::next,
+                            leading = null,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        GhostButton("结束本次", onClick = controller::finish)
+                        if (showKeyHints) {
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                "键盘：Enter 继续",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Palette.Faint,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -812,9 +854,15 @@ private fun SubmitBar(controller: AppController, item: SessionItem) {
             PrimaryButton("提交作答", onClick = controller.practice::submit, enabled = hasAnswer)
         }
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             GhostButton("放弃本题", onClick = controller.practice::abandon)
+            Spacer(Modifier.width(4.dp))
             GhostButton("结束本次", onClick = controller::finish)
+            val hint = keyHintFor(question.type)
+            if (hint != null && showKeyHints) {
+                Spacer(Modifier.weight(1f))
+                Text(hint, style = MaterialTheme.typography.bodySmall, color = Palette.Faint)
+            }
         }
     }
 }
@@ -1080,4 +1128,77 @@ private fun verdictHeadline(verdict: Verdict): String = when (verdict) {
     Verdict.INCORRECT -> "回答错误"
     Verdict.PENDING -> "无法可靠判定"
     Verdict.ABANDONED -> "本题已放弃"
+}
+
+// ------------------------------------------------------------------ 键盘作答
+
+/**
+ * 按键与选项序号的对应表。
+ *
+ * 只列到 Z / 9：再多的选项按键盘也选不过来，界面上仍然点得到。
+ * 列表顺序就是序号 —— A 是第 1 个，数字 1 也是第 1 个，两套键位指向同一件事。
+ */
+private val letterKeys = listOf(
+    Key.A, Key.B, Key.C, Key.D, Key.E, Key.F, Key.G, Key.H, Key.I, Key.J, Key.K, Key.L, Key.M,
+    Key.N, Key.O, Key.P, Key.Q, Key.R, Key.S, Key.T, Key.U, Key.V, Key.W, Key.X, Key.Y, Key.Z,
+)
+
+private val digitKeys = listOf(
+    Key.One, Key.Two, Key.Three, Key.Four, Key.Five, Key.Six, Key.Seven, Key.Eight, Key.Nine,
+)
+
+/**
+ * 把一次按键交给 [PracticeKeyboard] 翻译，再执行结论。
+ *
+ * 返回 true 表示这一下被吞掉了 —— 返回 false 让它继续往下传：
+ * 输入框里的字母、Ctrl+C、浏览器的刷新，都靠这个 false 才活得下来。
+ */
+private fun handlePracticeKey(event: KeyEvent, controller: AppController): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    val item = controller.practice.session?.current ?: return false
+
+    val keystroke = Keystroke(
+        letterIndex = letterKeys.indexOf(event.key).takeIf { it >= 0 },
+        digitIndex = digitKeys.indexOf(event.key).takeIf { it >= 0 },
+        isConfirm = event.key == Key.Enter || event.key == Key.NumPadEnter,
+        hasCommandModifier = event.isCtrlPressed || event.isAltPressed || event.isMetaPressed,
+    )
+    val context = PracticeKeyContext(
+        type = item.question.type,
+        optionCount = item.orderedOptions().size,
+        revealed = controller.practice.feedback != null,
+        canSubmit = controller.practice.canSubmitCurrent,
+    )
+
+    return when (val command = PracticeKeyboard.translate(keystroke, context)) {
+        is PracticeCommand.PickOption -> {
+            val option = item.orderedOptions().getOrNull(command.index) ?: return false
+            controller.practice.toggleOption(option.optionId)
+            true
+        }
+
+        PracticeCommand.Submit -> {
+            controller.practice.submit()
+            true
+        }
+
+        PracticeCommand.Advance -> {
+            controller.next()
+            true
+        }
+
+        PracticeCommand.Ignored -> false
+    }
+}
+
+/** 要不要把快捷键写进界面：手机上写"按 A"只会让人到处找按键。 */
+private val showKeyHints: Boolean get() = getPlatform().hasPhysicalKeyboard
+
+/** 这道题能用哪几个键。重组题没有键位（它是"点片段"，没有可数的序号）。 */
+private fun keyHintFor(type: QuestionType): String? = when (type) {
+    QuestionType.SINGLE_CHOICE, QuestionType.MULTIPLE_CHOICE, QuestionType.TRUE_FALSE ->
+        "键盘：A/B/C… 选择 · Enter 提交"
+
+    QuestionType.SHORT_ANSWER -> "键盘：Ctrl + Enter 提交"
+    QuestionType.ORDERING -> null
 }

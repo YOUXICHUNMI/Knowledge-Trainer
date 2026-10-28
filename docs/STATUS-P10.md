@@ -116,7 +116,7 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **631 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **647 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
 | 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
@@ -158,7 +158,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，631 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，647 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -472,6 +472,50 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 
 631 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs` 均通过。
 
+### 17. 练习页：修好一个点不到的按钮，然后让它能用手回答
+
+这一节是两件事，但它们同源 —— 都出在「界面自己另写一份规则」。
+
+**先是一个真缺陷。** 提交栏自己算「有没有答案」，只认 `selectedOptionIds`；而重组题
+（`ORDERING`）的作答存在 `orderedOptionIds` 里。于是：领域层判得出次序、`submit()` 也提交得了、
+`GradingTest` 里那几个重组题用例全绿 —— 但用户面前那个「提交作答」按钮永远是灰的。
+判题策略齐全、界面点不到，这条题型从上线起就没法真正做完一道。
+
+修法不是把界面的判断改对，而是**让它没有第二份可写**：`PracticeController.currentAnswerDraft()`
+把草稿折成 `AnswerInput`（`submit()` 本来就在做同一件事，现在它也走这一个），
+`canSubmitCurrent` 读它的 `isEmpty`。提交按钮、回车键、`submit()` 从此共用一条判定。
+新增用例钉住：排一段片段按钮就该亮；排完三段提交得到 `CORRECT`，次序原样进历史 ——
+把 `canSubmitCurrent` 换回旧规则，这条用例会失败（验过）。
+
+**然后是键盘。** 这是一个训练器：一天几百次「看题 → 选 → 提交 → 下一题」，
+每一次都要求手离开键盘去够鼠标，等于把成本加在最热的路径上。而此前整个界面
+一个 `KeyEvent` 都没有。
+
+| 按键 | 行为 |
+|---|---|
+| `A`–`Z` / `1`–`9` | 选中屏幕上对应位置的选项（字母与数字同义） |
+| `Enter` | 未提交时提交；已判完时继续下一题（最后一题去总结） |
+| `Ctrl/Cmd + Enter` | 简答题提交（裸回车留给换行：逐字符判定的答案可能有多行） |
+| 带 `Ctrl`/`Alt`/`Cmd` | 一律不管 —— 剪贴板、输入法、浏览器快捷键照常 |
+
+规则放在 `presentation/practice/PracticeKeyboard.kt`：一个 `translate(keystroke, context)`
+的纯函数，不碰 Compose，所以能被单测钉住 —— **重点是「什么时候不许管」**：
+简答题里按 `2` 是打字，回车是换行，`Ctrl+C` 是复制。抢错一个，用户会觉得输入框坏了，
+而这种坏法在界面上点一遍发现不了。12 条用例全是这一类。
+
+界面这一侧只剩接线：整页挂 `focusRequester + focusable + onPreviewKeyEvent`，
+点过按钮之后事件仍然从这一层过一道 preview（否则「点一下就再也按不动键盘」）。
+**这一半只靠编译看不出来**：修饰符少一个 `focusable()`，整页看着完全正常，键盘悄悄地什么都不做。
+所以另补 3 条接线测试（`PracticeKeyboardGestureTest`）：用离屏场景真的渲染练习页、
+真的往里发按键，断言「按 A 选中第一个选项 / 按 2 选中第二个 / 按 Enter 提交并落到总结」，
+以及「简答题里按 A 不会被抢走」。用的是 `ScreenshotTest` 同一套 Skia 栈，不需要显示器。
+
+提示只在有物理键盘的设备上显示（`Platform.hasPhysicalKeyboard`，Android / iOS 为 false）：
+手机上写「按 A 选择」，只会让人到处找按键。
+
+647 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
+`:androidApp:compileDebugKotlin` 均通过。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
@@ -482,9 +526,10 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 631 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 647 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
+| 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
 | 只能整库移除，不能删单题 | 题库内容属于作者：要改单题走 `.qbpatch`，本机只能追加自己的题。移除不可撤销，退路只有备份 |
 
 ## 下一步建议
