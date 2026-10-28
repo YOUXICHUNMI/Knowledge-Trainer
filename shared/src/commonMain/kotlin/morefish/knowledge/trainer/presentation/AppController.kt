@@ -59,17 +59,12 @@ import morefish.knowledge.trainer.domain.grading.builtInGradingRegistry
 import morefish.knowledge.trainer.domain.graph.DependencyKind
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.AttemptRecord
-import morefish.knowledge.trainer.domain.model.Ids
-import morefish.knowledge.trainer.domain.model.Note
 import morefish.knowledge.trainer.domain.model.NoteScope
 import morefish.knowledge.trainer.domain.model.PracticeSession
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
-import morefish.knowledge.trainer.domain.model.ValidationIssue
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.WrongQuestionEntry
-import morefish.knowledge.trainer.domain.model.countForBank
-import morefish.knowledge.trainer.domain.model.forQuestion
 import morefish.knowledge.trainer.domain.patch.BankRevision
 import morefish.knowledge.trainer.domain.patch.PatchApply
 import morefish.knowledge.trainer.domain.patch.PatchChangeKind
@@ -92,6 +87,8 @@ import morefish.knowledge.trainer.presentation.graph.GraphWrite
 import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.importing.ImportController
 import morefish.knowledge.trainer.presentation.importing.ImportVerdict
+import morefish.knowledge.trainer.presentation.notes.NoteController
+import morefish.knowledge.trainer.presentation.notes.NoteDelete
 import morefish.knowledge.trainer.presentation.practice.PracticeController
 import morefish.knowledge.trainer.presentation.practice.PracticeResume
 import morefish.knowledge.trainer.presentation.review.ReviewController
@@ -372,31 +369,24 @@ class AppController(
         private set
 
     // ---- 笔记 ----
-    var notes by mutableStateOf<List<Note>>(emptyList())
-        private set
 
-    /** 编辑器种子：noteId 为空表示新建。切换页面时整体替换，界面按它重置表单。 */
-    var noteSeed by mutableStateOf<Note?>(null)
-        private set
-    var noteIssues by mutableStateOf<List<ValidationIssue>>(emptyList())
-        private set
-    var noteSaved by mutableStateOf(false)
-        private set
-    var noteBusy by mutableStateOf(false)
-        private set
-
-    /** 从题库卡片进入笔记页时的筛选；null 表示看全部。 */
-    var noteBankFilter by mutableStateOf<String?>(null)
-        private set
+    /**
+     * 个人笔记：全部笔记、编辑器种子、校验结论与写盘。
+     *
+     * 它是第二条"自己写盘"的分支（第一条是 AI 讲解）：笔记只属于用户自己，
+     * 换谁去写都是两份真相。而"编辑时沿用原 noteId 与 createdAt""校验不过就不落盘"
+     * 这两条规则必须和写盘待在一起 —— 所以整块搬进 [NoteController]。
+     *
+     * 组合根只留导航：进列表、进编辑器、返回目标，以及删除成功之后去哪一屏。
+     */
+    val notes = NoteController(
+        repository = deps.noteRepository,
+        clock = deps.clock,
+        scope = scope,
+    )
 
     /** 编辑器返回目标：从练习页进来就回练习页，而不是把人丢进笔记列表。 */
     private var noteReturn by mutableStateOf(Screen.NOTES)
-
-    val noteEditingExisting: Boolean get() = !noteSeed?.noteId.isNullOrBlank()
-
-    fun noteCountFor(bankId: String): Int = notes.countForBank(bankId)
-
-    fun notesForBank(bankId: String): List<Note> = notes.filter { it.bankId == bankId }
 
     val storageWarning: String? get() = if (deps.persistentStorage) null else "当前平台为内存存储，重启后题库、进度与历史会丢失"
 
@@ -584,7 +574,7 @@ class AppController(
         // 历史变了，按语言缓存的那份统计就作废：否则设置页会拿旧的"未练习"数去抽题
         setup.invalidateStats()
         favorites = deps.favoriteRepository.all()
-        notes = deps.noteRepository.all()
+        notes.reload()
         // 扩展包先于图谱读：图谱视图要从"生效中的包"合并关系
         extensions = deps.extensionRepository.all()
         // 图谱只是一份引用清单，读它很便宜；练习页要知道"本题的硬依赖还在不在"
@@ -670,45 +660,32 @@ class AppController(
     }
 
     // ---- 个人笔记 ----
+    //
+    // 这里只剩导航：进列表、进编辑器、返回目标，以及删除成功之后去哪一屏。
+    // 校验、时间戳、写盘全在 [NoteController] 里 —— 那几件事分开写就没人能确认它们一起发生。
 
     fun openNotes(bankId: String? = null) {
-        noteBankFilter = bankId
+        notes.filterByBank(bankId)
         screen = Screen.NOTES
-        scope.launch { refreshNotes() }
-    }
-
-    fun filterNotesByBank(bankId: String?) {
-        noteBankFilter = bankId
+        scope.launch { notes.reload() }
     }
 
     fun closeNotes() {
-        noteBankFilter = null
+        notes.clearFilter()
         screen = Screen.HOME
     }
 
     fun openNoteEditor(noteId: String) {
-        val note = notes.firstOrNull { it.noteId == noteId } ?: return
+        val note = notes.byId(noteId) ?: return
         if (screen != Screen.NOTE_EDITOR) noteReturn = screen
-        noteSeed = note
-        noteIssues = emptyList()
-        noteSaved = false
+        notes.beginEdit(note)
         screen = Screen.NOTE_EDITOR
     }
 
-    /**
-     * 新建笔记。[questionId] 非空时是"对当前题写"，
-     * 此刻就把关联钉死在种子里，避免用户在编辑器里改出"题目笔记却没题"的悬空记录。
-     */
+    /** 新建笔记。关联在种子里就钉死，进入编辑器后不会再变。 */
     fun openNewNote(scope: NoteScope = NoteScope.DRAFT, bankId: String? = null, questionId: String? = null) {
         if (screen != Screen.NOTE_EDITOR) noteReturn = screen
-        noteSeed = Note(
-            noteId = "",
-            scope = scope,
-            bankId = bankId,
-            questionId = questionId,
-        )
-        noteIssues = emptyList()
-        noteSaved = false
+        notes.beginNew(scope, bankId, questionId)
         screen = Screen.NOTE_EDITOR
     }
 
@@ -723,65 +700,19 @@ class AppController(
     }
 
     fun closeNoteEditor() {
-        noteSeed = null
+        notes.clearSeed()
         screen = noteReturn
-        scope.launch { refreshNotes() }
+        scope.launch { notes.reload() }
     }
 
-    /**
-     * 保存笔记。校验 fail-closed：有 ERROR 就不落盘，
-     * 但界面上的文字仍然保留，不会因为一次校验失败让人重写。
-     */
-    fun saveNote(draft: Note) {
-        val errors = draft.errors()
-        noteIssues = errors
-        if (errors.isNotEmpty()) return
-
-        scope.launch {
-            noteBusy = true
-            val now = deps.clock.nowMillis()
-            val existing = draft.noteId.takeIf { it.isNotBlank() }?.let { deps.noteRepository.find(it) }
-            val note = draft.copy(
-                noteId = draft.noteId.ifBlank { Ids.prefixed("note", 10) },
-                title = draft.title.trim(),
-                bodyMarkdown = draft.bodyMarkdown.trim(),
-                createdAtMillis = existing?.createdAtMillis ?: now,
-                updatedAtMillis = now,
-            )
-            deps.noteRepository.upsert(note)
-            noteSeed = note
-            noteBusy = false
-            noteSaved = true
-            noteIssues = emptyList()
-            refreshNotes()
-        }
-    }
-
+    /** 删除之后回列表页并说一句；"删掉了没有"由控制器给结论，这里只决定去哪。 */
     fun deleteNote(noteId: String) {
-        if (noteId.isBlank()) return
         scope.launch {
-            noteBusy = true
-            deps.noteRepository.delete(noteId)
-            noteBusy = false
-            noteSeed = null
-            noteSaved = false
-            refreshNotes()
-            screen = Screen.NOTES
-            banner = Banner("笔记已删除", isError = false)
+            if (notes.delete(noteId) == NoteDelete.DELETED) {
+                screen = Screen.NOTES
+                banner = Banner("笔记已删除", isError = false)
+            }
         }
-    }
-
-    /** 置顶只改 pinned，不动 updatedAt —— "最近修改"必须仍然是真实的写作时间。 */
-    fun toggleNotePin(noteId: String) {
-        val note = notes.firstOrNull { it.noteId == noteId } ?: return
-        scope.launch {
-            deps.noteRepository.upsert(note.copy(pinned = !note.pinned))
-            refreshNotes()
-        }
-    }
-
-    private suspend fun refreshNotes() {
-        notes = deps.noteRepository.all()
     }
 
     // ---- 扩展包（.qbext） ----
@@ -927,7 +858,7 @@ class AppController(
         },
         banks = { banks },
         attemptCount = { review.rawAttempts.size },
-        noteCount = { notes.size },
+        noteCount = { notes.count },
         decisionCount = { review.decisionCount },
         initialRecovery = deps.restoreRecovery,
     )
@@ -976,7 +907,7 @@ class AppController(
             auditReferences(
                 banks = banks,
                 graph = graph.merged,
-                notes = notes,
+                notes = notes.all,
                 extensions = extensions,
                 history = review.rawAttempts,
                 availablePaths = available,

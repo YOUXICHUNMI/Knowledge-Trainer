@@ -54,9 +54,9 @@ import morefish.knowledge.trainer.presentation.ui.SectionTitle
  */
 @Composable
 fun NoteEditorScreen(controller: AppController) {
-    val seed = controller.noteSeed
+    val seed = controller.notes.seed
     ScreenScaffold(
-        title = if (controller.noteEditingExisting) "编辑笔记" else "新建笔记",
+        title = if (controller.notes.editingExisting) "编辑笔记" else "新建笔记",
         subtitle = seed?.scope?.label ?: "",
         onBack = controller::closeNoteEditor,
     ) {
@@ -258,7 +258,7 @@ private fun NoteForm(controller: AppController, seed: Note) {
             }
         }
 
-        val issues = controller.noteIssues
+        val issues = controller.notes.issues
         if (issues.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Panel(accent = Palette.Wrong) {
@@ -270,7 +270,7 @@ private fun NoteForm(controller: AppController, seed: Note) {
             }
         }
 
-        if (controller.noteSaved && !dirty) {
+        if (controller.notes.saved && !dirty) {
             Spacer(Modifier.height(10.dp))
             Panel(accent = Palette.Correct) {
                 Text("已保存到本机。", style = MaterialTheme.typography.bodyMedium, color = Palette.Correct)
@@ -292,11 +292,11 @@ private fun NoteForm(controller: AppController, seed: Note) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PrimaryButton(
-                if (controller.noteBusy) "保存中…" else "保存笔记",
-                enabled = !controller.noteBusy,
+                if (controller.notes.busy) "保存中…" else "保存笔记",
+                enabled = !controller.notes.busy,
                 onClick = {
                     dirty = false
-                    controller.saveNote(
+                    controller.notes.save(
                         seed.copy(
                             scope = scope,
                             bankId = if (scope == NoteScope.DRAFT) null else bankId,
@@ -307,7 +307,7 @@ private fun NoteForm(controller: AppController, seed: Note) {
                     )
                 },
             )
-            if (controller.noteEditingExisting) {
+            if (controller.notes.editingExisting) {
                 if (confirmingDelete) {
                     GhostButton("确认删除（不可恢复）", color = Palette.Wrong, onClick = {
                         controller.deleteNote(seed.noteId)

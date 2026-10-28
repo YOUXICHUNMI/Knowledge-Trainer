@@ -170,7 +170,7 @@ fun HomeScreen(controller: AppController) {
                 SecondaryButton("错题本", onClick = controller::openWrong, leading = "✕")
                 SecondaryButton("历史记录", onClick = controller::openHistory, leading = "≡")
                 SecondaryButton(
-                    if (controller.notes.isEmpty()) "笔记" else "笔记 ${controller.notes.size}",
+                    if (controller.notes.count == 0) "笔记" else "笔记 ${controller.notes.count}",
                     onClick = { controller.openNotes() },
                     leading = "✎",
                 )
@@ -223,7 +223,7 @@ fun HomeScreen(controller: AppController) {
                         bank = bank,
                         controller = controller,
                         favoriteCount = controller.favorites.count { it.bankId == bank.bankId },
-                        noteCount = controller.noteCountFor(bank.bankId),
+                        noteCount = controller.notes.countFor(bank.bankId),
                     )
                 }
                 Spacer(Modifier.height(10.dp))

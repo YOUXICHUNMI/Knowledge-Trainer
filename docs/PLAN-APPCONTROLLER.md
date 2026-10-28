@@ -7,8 +7,8 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 1691 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247 → 1949 → 1691） |
-| 公开成员 | 约 190 个（属性 + 方法） |
+| `AppController.kt` | 1622 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247 → 1949 → 1691 → 1622） |
+| 公开成员 | 约 120 个（属性 + 方法；拆分前约 190 个） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
 | 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，623 个 JVM 用例 |
 
@@ -37,6 +37,7 @@ presentation/
   practice/PracticeController.kt  ✅ 已拆
   graph/GraphController.kt      ✅ 已拆
   backup/BackupController.kt    ✅ 已拆
+  notes/NoteController.kt       ✅ 已拆（计划外补的第 12 项）
 ```
 
 ## 三条硬规则
@@ -74,9 +75,13 @@ presentation/
 | 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | ✅ 已完成 |
 | 10 | 个人知识图谱 | ~429 | `GraphScreen` | ✅ 已完成 |
 | 11 | 备份与迁移（.qbk） | ~437 | `BackupScreen` | ✅ 已完成 |
+| 12 | 个人笔记 | ~150 | `NotesScreen`、`NoteEditorScreen`、`PracticeScreen` | ✅ 已完成（计划遗漏，补做） |
 
 排序理由：先做"读写独立性高、只被一个界面使用"的部分，积累套路；
 练习与备份涉及会话恢复、媒体重建、题库整体替换，放最后。
+
+第 12 项（笔记）是做完十一刀回头核账时才发现的：它一直在最初的名单之外，
+但它符合同一条切割线（独立数据、独立界面、与题库只按 id 相认），所以补做，而不是留着当例外。
 
 ## 每一刀的验收清单
 
@@ -361,3 +366,32 @@ presentation/
 - 文件从 1949 行降到 1691 行；622 → 623 用例全绿，行为不变。
 - **计划完成**：11 个关注点全部拆完，组合根从 3371 行降到 1691 行（-50%），
   用例从 601 涨到 623。
+
+## 已完成的第十二刀（个人笔记）
+
+- 新增 `presentation/notes/NoteController.kt`（183 行）：全部笔记、编辑器种子、校验结论、
+  "已保存"与"保存中"标记、题库筛选，以及保存 / 删除 / 置顶三条写路径。
+- 这一项不在原计划表里。做完十一刀回头核账（谁还在 `AppController` 里既管状态又写盘）
+  才发现笔记整块都还在：它有自己的数据（`NoteRepository`）、自己的两个界面、
+  与题库只按 `bankId`/`questionId` 相认。留着的唯一理由只是"当初列名单时漏了"——
+  所以补做，而不是给它一个"就是该在组合根"的说法。
+- **它值得单独存在的理由是"笔记是唯一丢了就找不回来的东西"**：题库来自作者，
+  历史来自作答，两者都能重新算出来；笔记不行。所以两条规则必须和写盘写在一起 ——
+  校验 fail-closed（有 ERROR 就不落盘）、编辑沿用原 `noteId` 与 `createdAt`
+  （否则"编辑"会变成"新增一条"，同一份想法越改越多）。这两句分开写在两个文件里，
+  没人能一眼确认它们真的一起发生。
+- **删除要把种子一起清掉**，这条是补测试时才想清楚的：种子留着，编辑器就还拿着一条
+  已经不存在的笔记，用户再点一次"保存"就会用原 noteId 把它写回来 ——
+  他看到的是"我明明删了"，磁盘上却是"还在"。新增用例
+  `deletingANoteAlsoDropsTheEditorSeedSoItCannotComeBack` 钉住这句。
+- 导航仍留在组合根：`openNotes`（顺带重读列表）/ `closeNotes`（清筛选）/
+  `openNoteEditor` / `openNewNote`（记住"从练习页来的"）/ `openNoteForCurrentQuestion` /
+  `closeNoteEditor`。删除是唯一会换屏的写操作，所以 `delete()` 返回
+  `NoteDelete.DELETED / NOTHING`：删掉了回列表并说一句，本来就没有就什么都不做 ——
+  对一条不存在的笔记弹"已删除"只会让人怀疑自己的眼睛。
+- **没有留转发属性**：`noteCountFor` / `saveNote` / `toggleNotePin` / `filterNotesByBank`
+  全部从组合根删除，调用点改成 `controller.notes.countFor(...)` 这类。
+  顺手删掉死代码 `notesForBank()`（没有任何调用点）。
+- 调用方 45 处：`NoteEditorScreen` 8、`NotesScreen` 4、`HomeScreen` 2、
+  `AppControllerTest` 26、`ScreenshotTest` 5。
+- 文件从 1691 行降到 1622 行；623 → 624 用例全绿，行为不变。

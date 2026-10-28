@@ -316,23 +316,23 @@ class ScreenshotTest {
         val firstQuestion = imported.questions.first()
 
         controller.openNewNote(NoteScope.BANK, imported.bankId)
-        controller.saveNote(
-            controller.noteSeed!!.copy(
+        controller.notes.save(
+            controller.notes.seed!!.copy(
                 title = "这份题库的边界",
                 bodyMarkdown = "只覆盖**第一章到第三章**，第四章的线路计算没有收进来。\n\n" +
                     "- 选择题占七成\n- 计算题偏少\n\n复习时配合真题使用。",
             ),
         )
         controller.openNewNote(NoteScope.QUESTION, imported.bankId, firstQuestion.questionId)
-        controller.saveNote(
-            controller.noteSeed!!.copy(
+        controller.notes.save(
+            controller.notes.seed!!.copy(
                 bodyMarkdown = "**易错点**：先把单位统一成国际单位再代入。\n\n" +
                     "自感电动势 \$e = -L\\dfrac{\\Delta I}{\\Delta t}\$，负号只表示方向。",
             ),
         )
         controller.openNewNote(NoteScope.DRAFT)
-        controller.saveNote(
-            controller.noteSeed!!.copy(
+        controller.notes.save(
+            controller.notes.seed!!.copy(
                 title = "周末计划",
                 bodyMarkdown = "1. 复盘错题本里 30 天内的错题\n2. 把谐振频率那组公式默写一遍\n3. 做一套完整卷",
             ),
@@ -343,11 +343,11 @@ class ScreenshotTest {
             AppContent(controller)
         }
         shot("18-note-editor") {
-            controller.openNoteEditor(controller.notes.first { it.scope == NoteScope.DRAFT }.noteId)
+            controller.openNoteEditor(controller.notes.all.first { it.scope == NoteScope.DRAFT }.noteId)
             AppContent(controller)
         }
         shot("19-note-editor-formula") {
-            controller.openNoteEditor(controller.notes.first { it.scope == NoteScope.QUESTION }.noteId)
+            controller.openNoteEditor(controller.notes.all.first { it.scope == NoteScope.QUESTION }.noteId)
             AppContent(controller)
         }
     }

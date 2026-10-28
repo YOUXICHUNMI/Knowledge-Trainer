@@ -349,16 +349,16 @@ class AppControllerTest {
 
         first.openNoteForCurrentQuestion()
         assertEquals(Screen.NOTE_EDITOR, first.screen)
-        val seed = assertNotNull(first.noteSeed)
+        val seed = assertNotNull(first.notes.seed)
         assertEquals(NoteScope.QUESTION, seed.scope)
         assertEquals(question.questionId, seed.questionId)
         assertEquals(first.practice.session!!.bankId, seed.bankId, "题目笔记必须自动挂上当前题库")
 
-        first.saveNote(seed.copy(bodyMarkdown = " 先判断量纲，再代入数值 "))
+        first.notes.save(seed.copy(bodyMarkdown = " 先判断量纲，再代入数值 "))
         testScheduler.advanceUntilIdle()
 
-        assertTrue(first.noteSaved)
-        val saved = first.notes.single()
+        assertTrue(first.notes.saved)
+        val saved = first.notes.all.single()
         assertEquals("先判断量纲，再代入数值", saved.bodyMarkdown)
         assertTrue(saved.updatedAtMillis > 0)
 
@@ -366,10 +366,10 @@ class AppControllerTest {
         val restarted = controller(storage, testScheduler)
         restarted.refresh()
         testScheduler.advanceUntilIdle()
-        val reloaded = restarted.notes.single()
+        val reloaded = restarted.notes.all.single()
         assertEquals(NoteScope.QUESTION, reloaded.scope)
         assertEquals(question.questionId, reloaded.questionId)
-        assertEquals(1, restarted.noteCountFor(reloaded.bankId!!))
+        assertEquals(1, restarted.notes.countFor(reloaded.bankId!!))
     }
 
     @Test
@@ -377,15 +377,15 @@ class AppControllerTest {
         val storage = InMemoryTextStorage()
         val c = controller(storage, testScheduler)
         c.openNewNote()
-        c.saveNote(assertNotNull(c.noteSeed).copy(bodyMarkdown = "第一版"))
+        c.notes.save(assertNotNull(c.notes.seed).copy(bodyMarkdown = "第一版"))
         testScheduler.advanceUntilIdle()
-        val created = c.notes.single()
+        val created = c.notes.all.single()
 
         now += 5_000
-        c.saveNote(created.copy(bodyMarkdown = "第二版"))
+        c.notes.save(created.copy(bodyMarkdown = "第二版"))
         testScheduler.advanceUntilIdle()
 
-        val edited = c.notes.single()
+        val edited = c.notes.all.single()
         assertEquals(created.noteId, edited.noteId, "编辑不能变成新增一条")
         assertEquals(created.createdAtMillis, edited.createdAtMillis)
         assertTrue(edited.updatedAtMillis > created.updatedAtMillis)
@@ -397,12 +397,12 @@ class AppControllerTest {
         val storage = InMemoryTextStorage()
         val c = controller(storage, testScheduler)
         c.openNewNote()
-        c.saveNote(assertNotNull(c.noteSeed))
+        c.notes.save(assertNotNull(c.notes.seed))
         testScheduler.advanceUntilIdle()
 
-        assertFalse(c.noteSaved)
-        assertTrue(c.notes.isEmpty(), "空白笔记不得落盘")
-        assertTrue(c.noteIssues.any { it.code == "note-empty" })
+        assertFalse(c.notes.saved)
+        assertTrue(c.notes.all.isEmpty(), "空白笔记不得落盘")
+        assertTrue(c.notes.issues.any { it.code == "note-empty" })
         assertEquals(Screen.NOTE_EDITOR, c.screen, "校验失败应停在编辑器，不能吞掉用户输入")
     }
 
@@ -411,11 +411,11 @@ class AppControllerTest {
         val storage = InMemoryTextStorage()
         val c = controller(storage, testScheduler)
         c.openNewNote(NoteScope.QUESTION)
-        c.saveNote(assertNotNull(c.noteSeed).copy(bodyMarkdown = "没挂题的题目笔记"))
+        c.notes.save(assertNotNull(c.notes.seed).copy(bodyMarkdown = "没挂题的题目笔记"))
         testScheduler.advanceUntilIdle()
 
-        assertTrue(c.notes.isEmpty())
-        assertTrue(c.noteIssues.any { it.code == "note-question-missing" })
+        assertTrue(c.notes.all.isEmpty())
+        assertTrue(c.notes.issues.any { it.code == "note-question-missing" })
     }
 
     @Test
@@ -423,19 +423,43 @@ class AppControllerTest {
         val storage = InMemoryTextStorage()
         val c = controller(storage, testScheduler)
         c.openNewNote()
-        c.saveNote(assertNotNull(c.noteSeed).copy(bodyMarkdown = "可置顶可删除"))
+        c.notes.save(assertNotNull(c.notes.seed).copy(bodyMarkdown = "可置顶可删除"))
         testScheduler.advanceUntilIdle()
-        val note = c.notes.single()
+        val note = c.notes.all.single()
 
-        c.toggleNotePin(note.noteId)
+        c.notes.togglePin(note.noteId)
         testScheduler.advanceUntilIdle()
-        assertTrue(c.notes.single().pinned)
-        assertEquals(note.updatedAtMillis, c.notes.single().updatedAtMillis, "置顶不应改变最后编辑时间")
+        assertTrue(c.notes.all.single().pinned)
+        assertEquals(note.updatedAtMillis, c.notes.all.single().updatedAtMillis, "置顶不应改变最后编辑时间")
 
         c.deleteNote(note.noteId)
         testScheduler.advanceUntilIdle()
-        assertTrue(c.notes.isEmpty())
+        assertTrue(c.notes.all.isEmpty())
         assertEquals(Screen.NOTES, c.screen, "删除后回到列表，而不是留在已不存在的编辑器里")
+    }
+
+    @Test
+    fun deletingANoteAlsoDropsTheEditorSeedSoItCannotComeBack() = runTest {
+        val storage = InMemoryTextStorage()
+        val c = controller(storage, testScheduler)
+        c.openNewNote()
+        c.notes.save(assertNotNull(c.notes.seed).copy(bodyMarkdown = "删了就别回来"))
+        testScheduler.advanceUntilIdle()
+        val note = c.notes.all.single()
+
+        // 种子还留在编辑器里的话，再按一次"保存"就会拿着原 noteId 把它写回来 ——
+        // 用户看到的是"我明明删了"，磁盘上却是"还在"。
+        c.deleteNote(note.noteId)
+        testScheduler.advanceUntilIdle()
+
+        assertNull(c.notes.seed, "删除要把编辑器种子一起清掉")
+        assertFalse(c.notes.saved)
+        assertTrue(c.notes.all.isEmpty())
+
+        val restarted = controller(storage, testScheduler)
+        restarted.refresh()
+        testScheduler.advanceUntilIdle()
+        assertTrue(restarted.notes.all.isEmpty(), "磁盘上也不该留下这条")
     }
 
     @Test
@@ -449,7 +473,7 @@ class AppControllerTest {
         c.startPractice(c.banks.single(), questionCount = 1)
         c.openNoteForCurrentQuestion()
         assertEquals(Screen.NOTE_EDITOR, c.screen)
-        c.saveNote(assertNotNull(c.noteSeed).copy(bodyMarkdown = "做题时的想法"))
+        c.notes.save(assertNotNull(c.notes.seed).copy(bodyMarkdown = "做题时的想法"))
         testScheduler.advanceUntilIdle()
         c.closeNoteEditor()
         assertEquals(Screen.PRACTICE, c.screen)
@@ -457,7 +481,7 @@ class AppControllerTest {
 
         // 从笔记列表进入：回来仍是列表
         c.openNotes()
-        c.openNoteEditor(c.notes.single().noteId)
+        c.openNoteEditor(c.notes.all.single().noteId)
         c.closeNoteEditor()
         assertEquals(Screen.NOTES, c.screen)
     }
@@ -471,11 +495,11 @@ class AppControllerTest {
         val bankId = c.banks.single().bankId
 
         c.openNotes(bankId)
-        assertEquals(bankId, c.noteBankFilter)
-        c.filterNotesByBank(null)
-        assertNull(c.noteBankFilter)
+        assertEquals(bankId, c.notes.bankFilter)
+        c.notes.filterByBank(null)
+        assertNull(c.notes.bankFilter)
         c.closeNotes()
-        assertNull(c.noteBankFilter, "离开笔记页要清掉筛选，避免下次进来只剩一个题库")
+        assertNull(c.notes.bankFilter, "离开笔记页要清掉筛选，避免下次进来只剩一个题库")
         assertEquals(Screen.HOME, c.screen)
     }
 

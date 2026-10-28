@@ -52,10 +52,10 @@ fun NotesScreen(controller: AppController) {
     val now = WallClock.System.nowMillis()
     var query by remember { mutableStateOf("") }
     var scopeFilter by remember { mutableStateOf<NoteScope?>(null) }
-    val bankFilter = controller.noteBankFilter
+    val bankFilter = controller.notes.bankFilter
     val bankFilterTitle = bankFilter?.let { id -> controller.banks.firstOrNull { it.bankId == id }?.title }
 
-    val all = controller.notes
+    val all = controller.notes.all
     val visible = all
         .filter { note ->
             (scopeFilter == null || note.scope == scopeFilter) &&
@@ -102,7 +102,7 @@ fun NotesScreen(controller: AppController) {
                     Palette.AccentSoft,
                 )
                 Spacer(Modifier.width(4.dp))
-                GhostButton("清除筛选", onClick = { controller.filterNotesByBank(null) })
+                GhostButton("清除筛选", onClick = { controller.notes.filterByBank(null) })
             }
         }
 
@@ -209,7 +209,7 @@ private fun NoteCard(note: Note, now: Long, controller: AppController) {
         ) {
             GhostButton(
                 if (note.pinned) "取消置顶" else "置顶",
-                onClick = { controller.toggleNotePin(note.noteId) },
+                onClick = { controller.notes.togglePin(note.noteId) },
             )
             GhostButton("编辑", onClick = { controller.openNoteEditor(note.noteId) })
         }
