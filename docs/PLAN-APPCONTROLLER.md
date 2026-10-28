@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2247 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247） |
+| `AppController.kt` | 1949 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247 → 1949） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，621 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，622 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -35,7 +35,7 @@ presentation/
   batch/BatchController.kt          ✅ 已拆
   importing/ImportController.kt    ✅ 已拆
   practice/PracticeController.kt  ✅ 已拆
-  graph/GraphController.kt
+  graph/GraphController.kt      ✅ 已拆
   backup/BackupController.kt
 ```
 
@@ -72,7 +72,7 @@ presentation/
 | 7 | 批量队列 | ~211 | `AiScreen` | ✅ 已完成 |
 | 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | ✅ 已完成 |
 | 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | ✅ 已完成 |
-| 10 | 个人知识图谱 | ~429 | `GraphScreen` | 待做 |
+| 10 | 个人知识图谱 | ~429 | `GraphScreen` | ✅ 已完成 |
 | 11 | 备份与迁移（.qbk） | ~437 | `BackupScreen` | 待做 |
 
 排序理由：先做"读写独立性高、只被一个界面使用"的部分，积累套路；
@@ -307,3 +307,28 @@ presentation/
   最后一题答完但没点总结就退出，下次启动**不该**出现"继续练习"（点进去只会看到一道空题），
   而答过的记录仍在历史里。这条钉的正是搬过来的那段收尾规则。
 - 文件从 2476 行降到 2247 行；620 → 621 用例全绿，行为不变。
+
+## 已完成的第十刀（个人知识图谱）
+
+- 新增 `presentation/graph/GraphController.kt`（439 行）：图谱本体、与生效扩展包的合并视图、
+  解析帧、筛选、跨库搜题（含防抖）、编辑草稿，以及保存 / 删除 / 复核三条写路径。
+- 这一刀搬的不是"字段多"，而是**唯一一处"显示的东西不等于存的东西"**：磁盘上只有用户手建的
+  那一份，界面上看到的却是"手建 + 生效中扩展包"。两者在视图层完全同权，唯一区别是扩展包带来的
+  关系不能在这里改。这层合并以前夹在每次 `refresh()` 里，谁也没法一眼确认"删了包关系还在不在"。
+- **导航留在组合根，写盘结果做成返回值。** `GraphWrite.Saved(message)` /
+  `Blocked(message)` 只描述"成了没有、该说哪句话"；要不要离开编辑器由调用点决定 ——
+  删除在列表页和编辑页都能点到，两处的下一屏不一样（同一条规则顺手也适用保存）。
+  `Blocked(null)` 表示"问题已经显示在表单里了"，不要再加一条横幅。
+- **组合根仍负责认扩展包。** "这条关系来自《某包》"要查包清单，`extensionNameOf` 是扩展包那一侧
+  的知识，所以 `openGraphEditor` / `deleteGraphEdge` / `revalidateGraphEdge` 三个入口先拦一道，
+  子控制器只认手建关系（`ownsEdge`）。
+- **题库标题不自己拼。** 题库缺失时组合根还会去"待继续会话"里找标题，所以 `bankTitleOf`
+  由外部递入，而不是在控制器里再写一份"（题库缺失）"。
+- 两个视图类型跟着搬：`GraphPickSide`、`GraphCard` 从组合根挪进 `presentation/graph`，
+  `AppController.kt` 从此不再定义图谱类型。
+- 顺手删掉一处死代码：`graphEdgesForCurrentQuestion()` 没有任何调用点。
+- 调用方 82 处：`GraphEditorScreen` 40、`GraphScreen` 11、`PracticeScreen` 1、`HomeScreen` 1、
+  `AppControllerTest` 25、`ExtensionFlowTest` 4。
+- 新增用例 `deletingAnEdgeFromTheListRefreshesTheListAndStaysThere`：列表页删完必须留在列表，
+  而且"解析过的那一帧"要跟着变 —— 模型空了视图没空，界面上就会留着一行已经不存在的关系。
+- 文件从 2247 行降到 1949 行；621 → 622 用例全绿，行为不变。

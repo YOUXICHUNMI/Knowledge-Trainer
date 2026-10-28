@@ -1,5 +1,6 @@
 package morefish.knowledge.trainer.presentation
 
+import morefish.knowledge.trainer.presentation.graph.GraphPickSide
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -116,7 +117,7 @@ class ExtensionFlowTest {
         val pack = c.extensions.single()
         assertEquals(ExtensionState.PENDING, c.extensionStateOf(pack))
         assertEquals(1, c.pendingExtensions.size)
-        assertEquals(0, c.graph.edges.size, "题库没到，关系不能提前出现在图谱里")
+        assertEquals(0, c.graph.merged.edges.size, "题库没到，关系不能提前出现在图谱里")
         assertEquals(4, c.extensionRelationCount, "关系已经装进来了，只是还没生效")
 
         // 横幅说明原因，而不是让人以为包坏了
@@ -138,15 +139,15 @@ class ExtensionFlowTest {
 
         assertEquals(ExtensionState.ACTIVE, c.extensionStateOf(c.extensions.single()))
         assertEquals(0, c.pendingExtensions.size)
-        assertEquals(4, c.graph.edges.size)
+        assertEquals(4, c.graph.merged.edges.size)
         c.openGraph()
         testScheduler.advanceUntilIdle()
-        assertTrue(c.graph.edges.all { it.edgeId.startsWith("ext:") })
+        assertTrue(c.graph.merged.edges.all { it.edgeId.startsWith("ext:") })
 
         // 目标题库（循环系统）仍然没装：跨库端点如实报"题库未安装"
-        val blocked = c.graphView.edges.count { it.blocked }
+        val blocked = c.graph.view.edges.count { it.blocked }
         assertEquals(1, blocked, "只有那条判题硬依赖应该被标暂停")
-        assertEquals(4, c.graphView.edges.count { it.target.status.label == "题库未安装" })
+        assertEquals(4, c.graph.view.edges.count { it.target.status.label == "题库未安装" })
     }
 
     @Test
@@ -158,14 +159,14 @@ class ExtensionFlowTest {
         c.refresh()
         testScheduler.advanceUntilIdle()
 
-        val edgeId = c.graph.edges.first().edgeId
+        val edgeId = c.graph.merged.edges.first().edgeId
         c.openGraphEditor(edgeId)
         assertEquals(Screen.EXTENSIONS, c.screen, "扩展包关系不能在这里进编辑器")
         assertTrue(c.banner!!.isError)
 
         c.deleteGraphEdge(edgeId)
         assertTrue(c.banner!!.isError)
-        assertEquals(4, c.graph.edges.size, "删不掉")
+        assertEquals(4, c.graph.merged.edges.size, "删不掉")
         assertEquals(1, c.extensions.size)
     }
 
@@ -211,8 +212,8 @@ class ExtensionFlowTest {
 
         // 先手工建一条关系
         c.openGraphEditor(source = QuestionRef(bankA, "q-cardiac-output"))
-        c.beginGraphPick(GraphPickSide.TARGET)
-        c.pickGraphHit(
+        c.graph.beginPick(GraphPickSide.TARGET)
+        c.graph.pickHit(
             morefish.knowledge.trainer.application.port.QuestionLocation(
                 bankId = bankA,
                 bankTitle = "生理学",
@@ -224,21 +225,21 @@ class ExtensionFlowTest {
         )
         c.saveGraphEdge()
         testScheduler.advanceUntilIdle()
-        assertEquals(1, c.graph.edges.size)
+        assertEquals(1, c.graph.merged.edges.size)
 
         c.importDroppedFile("relations.qbext", example)
         testScheduler.advanceUntilIdle()
-        assertEquals(5, c.graph.edges.size)
+        assertEquals(5, c.graph.merged.edges.size)
 
         c.removeExtension("physiology-crossref")
         testScheduler.advanceUntilIdle()
 
         assertTrue(c.extensions.isEmpty())
-        assertEquals(1, c.graph.edges.size, "只留手建的那条")
-        assertTrue(c.graph.edges.single().edgeId.startsWith("edge-"))
+        assertEquals(1, c.graph.merged.edges.size, "只留手建的那条")
+        assertTrue(c.graph.merged.edges.single().edgeId.startsWith("edge-"))
         // 手建的那条仍在磁盘上，删包没动图谱文件
         assertEquals(1, AppDependencies(storage, clock).graphRepository.load().edges.size)
-        assertNull(c.graph.snapshotOf(QuestionRef(bankB, "q-frank-starling")))
+        assertNull(c.graph.merged.snapshotOf(QuestionRef(bankB, "q-frank-starling")))
     }
 
     @Test

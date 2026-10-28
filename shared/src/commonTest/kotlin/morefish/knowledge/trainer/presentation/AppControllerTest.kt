@@ -1,5 +1,6 @@
 package morefish.knowledge.trainer.presentation
 
+import morefish.knowledge.trainer.presentation.graph.GraphPickSide
 import morefish.knowledge.trainer.presentation.toolbox.ConvPicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -619,7 +620,7 @@ class AppControllerTest {
         c.openGraph()
         testScheduler.advanceUntilIdle()
         assertEquals(Screen.GRAPH, c.screen)
-        assertNull(c.graphQuestionFilter, "从首页进来是看全部关系")
+        assertNull(c.graph.questionFilter, "从首页进来是看全部关系")
         c.closeGraph()
         assertEquals(Screen.HOME, c.screen)
 
@@ -630,7 +631,7 @@ class AppControllerTest {
         c.openGraphForCurrentQuestion()
         testScheduler.advanceUntilIdle()
         assertEquals(Screen.GRAPH, c.screen)
-        assertEquals(ref, c.graphQuestionFilter, "从练习页进来只看这道题的关系")
+        assertEquals(ref, c.graph.questionFilter, "从练习页进来只看这道题的关系")
 
         c.closeGraph()
         assertEquals(Screen.PRACTICE, c.screen)
@@ -654,29 +655,29 @@ class AppControllerTest {
         c.openGraphEditor(source = QuestionRef(bank.bankId, source.questionId))
         assertEquals(Screen.GRAPH_EDITOR, c.screen)
 
-        c.beginGraphPick(GraphPickSide.TARGET)
-        c.updateGraphQuery(target.promptMarkdown.take(4))
+        c.graph.beginPick(GraphPickSide.TARGET)
+        c.graph.updateQuery(target.promptMarkdown.take(4))
         testScheduler.advanceUntilIdle()
-        assertTrue(c.graphHits.isNotEmpty(), "跨库搜题应当能搜到题干")
-        c.pickGraphHit(c.graphHits.first())
-        assertEquals(GraphPickSide.NONE, c.graphPickSide, "选完就收起搜索框")
+        assertTrue(c.graph.hits.isNotEmpty(), "跨库搜题应当能搜到题干")
+        c.graph.pickHit(c.graph.hits.first())
+        assertEquals(GraphPickSide.NONE, c.graph.pickSide, "选完就收起搜索框")
 
-        c.updateGraphNote("这两道题一起看更容易记住")
+        c.graph.updateNote("这两道题一起看更容易记住")
         c.saveGraphEdge()
         testScheduler.advanceUntilIdle()
 
         assertEquals(Screen.GRAPH, c.screen, "保存后回图谱列表，而不是停在编辑器里")
-        val edge = c.graph.edges.single()
+        val edge = c.graph.merged.edges.single()
         assertEquals(source.questionId, edge.source.questionId)
         assertEquals("这两道题一起看更容易记住", edge.noteMarkdown)
-        assertNotNull(c.graph.snapshotOf(edge.source), "建立关系时要留下两端快照")
-        assertNotNull(c.graph.snapshotOf(edge.target))
-        assertEquals(1, c.graphView.relationCount)
-        assertEquals(0, c.graphView.problemRefCount)
+        assertNotNull(c.graph.merged.snapshotOf(edge.source), "建立关系时要留下两端快照")
+        assertNotNull(c.graph.merged.snapshotOf(edge.target))
+        assertEquals(1, c.graph.view.relationCount)
+        assertEquals(0, c.graph.view.problemRefCount)
 
         // 落盘了才算真的保存
         assertEquals(1, JsonGraphRepository(storage).load().edges.size)
-        assertEquals(1, c.graphEdgeCountFor(edge.source), "练习页的「关联 N」直接读这张图")
+        assertEquals(1, c.graph.edgeCountFor(edge.source), "练习页的「关联 N」直接读这张图")
     }
 
     @Test
@@ -694,19 +695,49 @@ class AppControllerTest {
         c.openGraph()
         testScheduler.advanceUntilIdle()
         c.openGraphEditor(source = ref)
-        c.beginGraphPick(GraphPickSide.TARGET)
-        c.updateGraphQuery(question.promptMarkdown.take(4))
+        c.graph.beginPick(GraphPickSide.TARGET)
+        c.graph.updateQuery(question.promptMarkdown.take(4))
         testScheduler.advanceUntilIdle()
-        c.pickGraphHit(c.graphHits.first())
-        c.updateGraphNote("写了一半的备注")
+        c.graph.pickHit(c.graph.hits.first())
+        c.graph.updateNote("写了一半的备注")
         c.saveGraphEdge()
         testScheduler.advanceUntilIdle()
 
         assertEquals(Screen.GRAPH_EDITOR, c.screen, "校验失败不该把人踢回列表")
-        assertTrue(c.graphIssues.any { it.code == "graph-self-reference" })
-        assertEquals("写了一半的备注", c.graphDraftNote, "失败后草稿必须还在")
-        assertNotNull(c.graphSource)
+        assertTrue(c.graph.issues.any { it.code == "graph-self-reference" })
+        assertEquals("写了一半的备注", c.graph.draftNote, "失败后草稿必须还在")
+        assertNotNull(c.graph.source)
         assertTrue(JsonGraphRepository(storage).load().edges.isEmpty(), "没通过校验就不能落盘")
+    }
+
+    @Test
+    fun deletingAnEdgeFromTheListRefreshesTheListAndStaysThere() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+
+        val bank = c.banks.single()
+        c.openGraph()
+        testScheduler.advanceUntilIdle()
+        c.openGraphEditor(source = QuestionRef(bank.bankId, bank.questions[0].questionId))
+        c.graph.beginPick(GraphPickSide.TARGET)
+        c.graph.updateQuery(bank.questions[1].promptMarkdown.take(4))
+        testScheduler.advanceUntilIdle()
+        c.graph.pickHit(c.graph.hits.first())
+        c.saveGraphEdge()
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, c.graph.view.edges.size)
+
+        c.deleteGraphEdge(c.graph.merged.edges.single().edgeId)
+        testScheduler.advanceUntilIdle()
+
+        // 列表页删完还留在列表；"解析过的那一帧"必须跟着变，否则界面上留着一行已经不存在的关系
+        assertEquals(Screen.GRAPH, c.screen, "在列表页删除不该把人踢走")
+        assertTrue(c.graph.merged.edges.isEmpty())
+        assertTrue(c.graph.view.edges.isEmpty(), "模型空了、视图没空，列表就会继续显示那条关系")
+        assertTrue(JsonGraphRepository(storage).load().edges.isEmpty())
     }
 
     @Test
@@ -780,8 +811,8 @@ class AppControllerTest {
         assertEquals(0, c.practice.blockedHardDependencies, "导航关系缺了只是少条线索，不该被说成判题暂停")
         c.openGraph()
         testScheduler.advanceUntilIdle()
-        assertTrue(c.graphView.problemRefCount > 0, "但在图谱页仍然要如实标出缺失")
-        assertEquals(0, c.graphView.blockedCount)
+        assertTrue(c.graph.view.problemRefCount > 0, "但在图谱页仍然要如实标出缺失")
+        assertEquals(0, c.graph.view.blockedCount)
     }
 
     @Test
@@ -819,7 +850,7 @@ class AppControllerTest {
         )
         c.openGraph()
         testScheduler.advanceUntilIdle()
-        assertEquals(0, c.graphView.problemRefCount)
+        assertEquals(0, c.graph.view.problemRefCount)
 
         // 作者更新了目标题：内容版本从 1 变成 2
         val updated = bank.copy(
@@ -835,12 +866,12 @@ class AppControllerTest {
 
         c.openGraph()
         testScheduler.advanceUntilIdle()
-        assertTrue(c.graphView.edges.single().target.status == morefish.knowledge.trainer.domain.graph.RefStatus.NEEDS_REVALIDATION)
+        assertTrue(c.graph.view.edges.single().target.status == morefish.knowledge.trainer.domain.graph.RefStatus.NEEDS_REVALIDATION)
 
         c.revalidateGraphEdge("edge-rev")
         testScheduler.advanceUntilIdle()
-        assertEquals(0, c.graphView.problemRefCount, "人工确认后按当前版本重记快照")
-        assertEquals(2, c.graph.snapshotOf(QuestionRef(bank.bankId, target.questionId))?.contentRevision)
+        assertEquals(0, c.graph.view.problemRefCount, "人工确认后按当前版本重记快照")
+        assertEquals(2, c.graph.merged.snapshotOf(QuestionRef(bank.bankId, target.questionId))?.contentRevision)
     }
 
     @Test
@@ -870,13 +901,13 @@ class AppControllerTest {
         testScheduler.advanceUntilIdle()
         c.revalidateGraphEdge("edge-del")
         testScheduler.advanceUntilIdle()
-        assertTrue(c.graph.snapshots.isNotEmpty())
+        assertTrue(c.graph.merged.snapshots.isNotEmpty())
 
         c.deleteGraphEdge("edge-del")
         testScheduler.advanceUntilIdle()
 
-        assertTrue(c.graph.edges.isEmpty())
-        assertTrue(c.graph.snapshots.isEmpty(), "关系没了，快照也没有存在理由")
+        assertTrue(c.graph.merged.edges.isEmpty())
+        assertTrue(c.graph.merged.snapshots.isEmpty(), "关系没了，快照也没有存在理由")
         val onDisk = JsonGraphRepository(storage).load()
         assertTrue(onDisk.edges.isEmpty())
         assertTrue(onDisk.snapshots.isEmpty())

@@ -290,7 +290,7 @@ private fun GraphLink(controller: AppController) {
     val session = controller.practice.session
     val question = session?.current?.question
     val ref = if (session != null && question != null) QuestionRef(session.bankId, question.questionId) else null
-    val count = ref?.let { controller.graphEdgeCountFor(it) } ?: 0
+    val count = ref?.let { controller.graph.edgeCountFor(it) } ?: 0
     val tint = when {
         controller.practice.blockedHardDependencies > 0 -> Palette.Wrong
         count > 0 -> Palette.Accent

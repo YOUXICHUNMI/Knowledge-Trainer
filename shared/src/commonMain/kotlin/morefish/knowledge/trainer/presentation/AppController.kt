@@ -59,21 +59,10 @@ import morefish.knowledge.trainer.domain.backup.auditReferences
 import morefish.knowledge.trainer.domain.extension.ExtensionPack
 import morefish.knowledge.trainer.domain.extension.ExtensionState
 import morefish.knowledge.trainer.domain.extension.extensionOwnerOf
-import morefish.knowledge.trainer.domain.extension.mergedWith
 import morefish.knowledge.trainer.domain.extension.stateIn
 import morefish.knowledge.trainer.domain.grading.builtInGradingRegistry
 import morefish.knowledge.trainer.domain.graph.DependencyKind
-import morefish.knowledge.trainer.domain.graph.GraphEdge
-import morefish.knowledge.trainer.domain.graph.GraphEdgeView
-import morefish.knowledge.trainer.domain.graph.GraphLookup
-import morefish.knowledge.trainer.domain.graph.GraphRelation
-import morefish.knowledge.trainer.domain.graph.GraphView
-import morefish.knowledge.trainer.domain.graph.KnowledgeGraph
-import morefish.knowledge.trainer.domain.graph.QuestionFact
 import morefish.knowledge.trainer.domain.graph.QuestionRef
-import morefish.knowledge.trainer.domain.graph.resolveGraph
-import morefish.knowledge.trainer.domain.graph.snapshotOf
-import morefish.knowledge.trainer.domain.graph.validate
 import morefish.knowledge.trainer.domain.model.AttemptRecord
 import morefish.knowledge.trainer.domain.model.Ids
 import morefish.knowledge.trainer.domain.model.Note
@@ -81,10 +70,8 @@ import morefish.knowledge.trainer.domain.model.NoteScope
 import morefish.knowledge.trainer.domain.model.PracticeSession
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
-import morefish.knowledge.trainer.domain.model.Severity
 import morefish.knowledge.trainer.domain.model.ValidationIssue
 import morefish.knowledge.trainer.domain.model.Verdict
-import morefish.knowledge.trainer.domain.model.validate
 import morefish.knowledge.trainer.domain.model.WrongQuestionEntry
 import morefish.knowledge.trainer.domain.model.countForBank
 import morefish.knowledge.trainer.domain.model.forQuestion
@@ -97,6 +84,8 @@ import morefish.knowledge.trainer.presentation.ai.AiController
 import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
 import morefish.knowledge.trainer.presentation.batch.BatchController
 import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
+import morefish.knowledge.trainer.presentation.graph.GraphController
+import morefish.knowledge.trainer.presentation.graph.GraphWrite
 import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.importing.ImportController
 import morefish.knowledge.trainer.presentation.importing.ImportVerdict
@@ -263,12 +252,6 @@ data class BackupIntake(
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = bytes.contentHashCode() * 31 + name.hashCode()
 }
-
-/** 图谱编辑器里正在为哪一端搜题。 */
-enum class GraphPickSide { NONE, SOURCE, TARGET }
-
-/** 编辑器里展示一端题目所需的最小信息。 */
-data class GraphCard(val bankTitle: String, val promptMarkdown: String, val contentRevision: Int?)
 
 /**
  * 单屏状态机。刻意不做"千行 ViewModel"：这里只负责串联用例与 UI 状态，
@@ -648,8 +631,7 @@ class AppController(
         // 扩展包先于图谱读：图谱视图要从"生效中的包"合并关系
         extensions = deps.extensionRepository.all()
         // 图谱只是一份引用清单，读它很便宜；练习页要知道"本题的硬依赖还在不在"
-        userGraph = deps.graphRepository.load()
-        graph = userGraph.mergedWith(activeExtensions)
+        graph.reload()
         // 会话文件只存题目与游标；已答数量从上面这份历史合并，避免两处各存一份而失配。
         practice.reconcileResumable(history)
         // 日历与错题本按全量历史重算（不受历史页筛选影响）
@@ -914,7 +896,7 @@ class AppController(
             extensionBusy = true
             importExtension.remove(packageId)
             refreshExtensions()
-            refreshMergedGraph()
+            graph.rematch()
             extensionBusy = false
             if (expandedExtensionId == packageId) expandedExtensionId = null
             banner = Banner("已移除扩展包《${pack.name}》（题库与历史未受影响）", isError = false)
@@ -930,12 +912,6 @@ class AppController(
     private suspend fun refreshExtensions() {
         banks = deps.bankRepository.list()
         extensions = deps.extensionRepository.all()
-    }
-
-    /** 包变过 → 合并后的图谱要重算，否则"移除后关系还在"这种假象会留到下次启动。 */
-    private suspend fun refreshMergedGraph() {
-        graph = userGraph.mergedWith(activeExtensions)
-        refreshGraphView()
     }
 
     // ---- 备份与迁移（.qbk） ----
@@ -1030,7 +1006,7 @@ class AppController(
         val available = paths ?: deps.vault.listPaths()
         backupAudit = auditReferences(
             banks = banks,
-            graph = graph,
+            graph = graph.merged,
             notes = notes,
             extensions = extensions,
             history = review.rawAttempts,
@@ -1378,35 +1354,18 @@ class AppController(
     // ---- 个人知识图谱 ----
 
     /**
-     * 图谱本体（用户手建的**那一份**，也是写回磁盘的那一份）。
-     *
-     * 扩展包的关系不写进这里：它们每次从包合并，删包即消失，
-     * 不会出现"包删了、关系还挂在图谱文件里"的半截状态。
+     * 图谱本体、合并视图、筛选与编辑器草稿都在 [GraphController] 里。
+     * 这里只留导航：进出图谱页 / 编辑器的 `screen`，以及"写完之后要不要离开编辑器"。
      */
-    private var userGraph by mutableStateOf(KnowledgeGraph.Empty)
-
-    /**
-     * 界面真正看到的图谱：手建关系 + 生效中扩展包的关系。
-     *
-     * 两者在视图层完全同权（同样参与缺失判定、同样能触发硬依赖暂停），
-     * 唯一区别是扩展包带来的关系不能在这里改 —— 改包才是改它。
-     */
-    var graph by mutableStateOf(KnowledgeGraph.Empty)
-        private set
-
-    /** 解析过的一帧：状态、可用性、排序都已算好，界面不做判断。 */
-    var graphView by mutableStateOf(GraphView.Empty)
-        private set
-
-    /** 从练习页进来时只看这道题的关系；首页进来是 null（看全部）。 */
-    var graphQuestionFilter by mutableStateOf<QuestionRef?>(null)
-        private set
-
-    var graphRelationFilter by mutableStateOf<GraphRelation?>(null)
-        private set
-
-    var graphProblemsOnly by mutableStateOf(false)
-        private set
+    val graph = GraphController(
+        graphs = deps.graphRepository,
+        bankRepository = deps.bankRepository,
+        clock = deps.clock,
+        scope = scope,
+        banks = { banks },
+        bankTitleOf = ::bankTitle,
+        activeExtensions = { activeExtensions },
+    )
 
     /** 图谱返回目标：从练习页进来就回练习页。 */
     private var graphReturn by mutableStateOf(Screen.HOME)
@@ -1414,112 +1373,20 @@ class AppController(
     /** 编辑器返回目标：从图谱列表进编辑器回列表，从别处进就回原处。 */
     private var graphEditorReturn by mutableStateOf(Screen.GRAPH)
 
-    var graphQuery by mutableStateOf("")
-        private set
-
-    var graphHits by mutableStateOf<List<QuestionLocation>>(emptyList())
-        private set
-
-    var graphPickSide by mutableStateOf(GraphPickSide.NONE)
-        private set
-
-    var graphSource by mutableStateOf<QuestionRef?>(null)
-        private set
-
-    var graphTarget by mutableStateOf<QuestionRef?>(null)
-        private set
-
-    var graphDraftRelation by mutableStateOf(GraphRelation.RELATED)
-        private set
-
-    var graphDraftDependency by mutableStateOf(DependencyKind.NAVIGATION)
-        private set
-
-    var graphDraftNote by mutableStateOf("")
-        private set
-
-    var graphIssues by mutableStateOf<List<ValidationIssue>>(emptyList())
-        private set
-
-    var graphBusy by mutableStateOf(false)
-        private set
-
-    var graphEditingEdgeId by mutableStateOf<String?>(null)
-        private set
-
-    /** 刚选中的端点（还没进图谱，解析结果里没有）。只在编辑期间用。 */
-    private var pickedCards by mutableStateOf<Map<String, QuestionLocation>>(emptyMap())
-
-    val graphEditing: Boolean get() = !graphEditingEdgeId.isNullOrBlank()
-
-    /** 当前关系能不能选判题硬依赖。对称关系不能。 */
-    val graphHardAllowed: Boolean get() = graphDraftRelation.allowsHardDependency
-
-    fun graphCardOf(ref: QuestionRef?): GraphCard? {
-        if (ref == null) return null
-        pickedCards[ref.key]?.let { return GraphCard(it.bankTitle, it.promptMarkdown, it.contentRevision) }
-        val resolved = graphView.refs.firstOrNull { it.ref == ref }
-        if (resolved != null) {
-            return GraphCard(
-                bankTitle = resolved.displayBankTitle,
-                promptMarkdown = resolved.displayPrompt,
-                contentRevision = resolved.liveRevision ?: resolved.snapshot?.contentRevision,
-            )
-        }
-        return GraphCard(bankTitle = bankTitle(ref.bankId), promptMarkdown = "", contentRevision = null)
-    }
-
-    private var graphSearchJob: Job? = null
-
-    /** 关系列表：题目筛选 → 关系筛选 → 只看问题，三个条件可叠加。 */
-    val graphFilteredEdges: List<GraphEdgeView>
-        get() {
-            var list = graphView.edges
-            graphQuestionFilter?.let { focus ->
-                list = list.filter { it.edge.source == focus || it.edge.target == focus }
-            }
-            graphRelationFilter?.let { relation ->
-                list = list.filter { it.edge.relation == relation }
-            }
-            if (graphProblemsOnly) list = list.filter { it.hasProblem }
-            return list
-        }
-
-    fun graphEdgeCountFor(ref: QuestionRef): Int = graph.edgesFor(ref).size
-
-    fun graphEdgesForCurrentQuestion(): List<GraphEdge> =
-        currentSessionRef()?.let { graph.edgesFor(it) } ?: emptyList()
-
     fun openGraph(from: Screen = screen, focus: QuestionRef? = null) {
         if (screen != Screen.GRAPH) graphReturn = from
-        graphQuestionFilter = focus
-        graphRelationFilter = null
-        graphProblemsOnly = false
+        graph.open(focus)
         screen = Screen.GRAPH
         scope.launch {
             // 题库可能刚导入过：先对齐目录，否则"题库未安装"会误报
             banks = deps.bankRepository.list()
-            refreshGraph()
+            graph.reload()
         }
     }
 
     fun closeGraph() {
-        graphQuestionFilter = null
-        graphRelationFilter = null
-        graphProblemsOnly = false
+        graph.resetFilters()
         screen = graphReturn
-    }
-
-    fun filterGraphRelation(relation: GraphRelation?) {
-        graphRelationFilter = relation
-    }
-
-    fun toggleGraphProblemsOnly() {
-        graphProblemsOnly = !graphProblemsOnly
-    }
-
-    fun clearGraphFocus() {
-        graphQuestionFilter = null
     }
 
     /** 练习页入口：看这道题已有的关系，返回时回到同一道题。 */
@@ -1531,6 +1398,8 @@ class AppController(
     /**
      * 打开关系编辑器。[source] 为空时用当前筛选的题目做起点 ——
      * 从某道题进来，默认就该从这道题连出去。
+     *
+     * "这条关系来自《某包》"要查包清单，属于组合根的事：子控制器不认识扩展包的名字。
      */
     fun openGraphEditor(edgeId: String? = null, source: QuestionRef? = null) {
         val owner = edgeId?.let { extensionNameOf(it) }
@@ -1541,225 +1410,62 @@ class AppController(
         if (screen != Screen.GRAPH_EDITOR) {
             graphEditorReturn = if (screen == Screen.GRAPH || screen == Screen.GRAPH_EDITOR) Screen.GRAPH else screen
         }
-        val edge = edgeId?.let { userGraph.edge(it) }
-        graphEditingEdgeId = edge?.edgeId
-        graphSource = edge?.source ?: source ?: graphQuestionFilter
-        graphTarget = edge?.target
-        graphDraftRelation = edge?.relation ?: GraphRelation.RELATED
-        graphDraftDependency = edge?.dependency ?: DependencyKind.NAVIGATION
-        graphDraftNote = edge?.noteMarkdown ?: ""
-        graphIssues = emptyList()
-        graphPickSide = GraphPickSide.NONE
-        graphQuery = ""
-        graphHits = emptyList()
+        graph.beginEdit(edgeId, source ?: graph.questionFilter)
         screen = Screen.GRAPH_EDITOR
     }
 
     fun closeGraphEditor() {
-        graphSearchJob?.cancel()
-        graphPickSide = GraphPickSide.NONE
-        graphQuery = ""
-        graphHits = emptyList()
-        graphSource = null
-        graphTarget = null
-        graphEditingEdgeId = null
+        graph.cancelEdit()
         screen = graphEditorReturn
     }
 
-    fun beginGraphPick(side: GraphPickSide) {
-        graphPickSide = side
-        graphQuery = ""
-        graphHits = emptyList()
-    }
-
-    fun cancelGraphPick() {
-        graphPickSide = GraphPickSide.NONE
-        graphQuery = ""
-        graphHits = emptyList()
-    }
-
-    /** 边打边搜，但等手停下来再查 —— 每敲一个字扫一遍题库不是搜索，是折腾磁盘。 */
-    fun updateGraphQuery(value: String) {
-        graphQuery = value
-        graphSearchJob?.cancel()
-        val keyword = value.trim()
-        if (keyword.isEmpty()) {
-            graphHits = emptyList()
-            return
-        }
-        graphSearchJob = scope.launch {
-            delay(250)
-            graphHits = deps.bankRepository.searchQuestions(keyword, GRAPH_SEARCH_LIMIT)
-        }
-    }
-
-    fun pickGraphHit(hit: QuestionLocation) {
-        when (graphPickSide) {
-            GraphPickSide.SOURCE -> graphSource = hit.ref
-            GraphPickSide.TARGET -> graphTarget = hit.ref
-            GraphPickSide.NONE -> return
-        }
-        pickedCards = pickedCards + (hit.ref.key to hit)
-        graphPickSide = GraphPickSide.NONE
-        graphQuery = ""
-        graphHits = emptyList()
-        graphIssues = emptyList()
-    }
-
-    fun selectGraphRelation(relation: GraphRelation) {
-        graphDraftRelation = relation
-        // 对称关系承载不了"谁依赖谁"，切过去时把硬依赖收回导航
-        if (graphDraftDependency == DependencyKind.HARD && !relation.allowsHardDependency) {
-            graphDraftDependency = DependencyKind.NAVIGATION
-        }
-    }
-
-    fun selectGraphDependency(kind: DependencyKind) {
-        if (kind == DependencyKind.HARD && !graphDraftRelation.allowsHardDependency) return
-        graphDraftDependency = kind
-    }
-
-    fun updateGraphNote(value: String) {
-        graphDraftNote = value
-    }
-
-    /**
-     * 保存关系。
-     *
-     * 校验 fail-closed：有 ERROR 就不落盘，但编辑中的内容全部保留 ——
-     * 一次校验失败让人重选两端才叫难受。
-     */
     fun saveGraphEdge() {
-        val source = graphSource
-        val target = graphTarget
-        if (source == null || target == null) {
-            graphIssues = listOf(
-                ValidationIssue(Severity.ERROR, "graph-needs-both", "两端都要选：先选起点，再选目标"),
-            )
-            return
-        }
-
-        val now = deps.clock.nowMillis()
-        val existing = graphEditingEdgeId?.let { userGraph.edge(it) }
-        val edge = GraphEdge(
-            edgeId = existing?.edgeId ?: Ids.prefixed("edge", 10),
-            source = source,
-            target = target,
-            relation = graphDraftRelation,
-            dependency = graphDraftDependency,
-            noteMarkdown = graphDraftNote.trim(),
-            createdAtMillis = existing?.createdAtMillis ?: now,
-            updatedAtMillis = now,
-        )
-
-        val issues = edge.validate()
-        graphIssues = issues
-        if (issues.any { it.severity == Severity.ERROR }) return
-
-        scope.launch {
-            graphBusy = true
-            val located = deps.bankRepository.locate(listOf(source, target))
-            val fresh = listOf(source, target).mapNotNull { ref ->
-                located[ref]?.let { fact ->
-                    snapshotOf(ref, QuestionFact(fact.bankTitle, fact.promptMarkdown, fact.contentRevision), now)
-                }
-            }
-            val next = userGraph.withEdge(edge).withSnapshots(fresh).pruned()
-            deps.graphRepository.save(next)
-            userGraph = next
-            graph = next.mergedWith(activeExtensions)
-            graphBusy = false
-            graphEditingEdgeId = null
-            graphSource = null
-            graphTarget = null
-            graphDraftNote = ""
-            screen = graphEditorReturn
-            refreshGraphView()
-            banner = Banner("关系已保存", isError = false)
-        }
+        scope.launch { graph.saveEdge().announce() }
     }
 
     fun deleteGraphEdge(edgeId: String) {
-        if (edgeId.isBlank()) return
         val owner = extensionNameOf(edgeId)
         if (owner != null) {
             banner = Banner("这条关系来自扩展包《$owner》，请在扩展包页移除整个包", isError = true)
             return
         }
-        scope.launch {
-            graphBusy = true
-            val next = userGraph.withoutEdge(edgeId).pruned()
-            deps.graphRepository.save(next)
-            userGraph = next
-            graph = next.mergedWith(activeExtensions)
-            graphBusy = false
-            if (screen == Screen.GRAPH_EDITOR) screen = graphEditorReturn
-            refreshGraphView()
-            banner = Banner("关系已删除（题库内容不受影响）", isError = false)
-        }
+        scope.launch { graph.deleteEdge(edgeId).announce() }
     }
 
-    /**
-     * 复核：用户看过当前内容，确认"这条关系仍然成立"。
-     *
-     * 这不是自动修复。内容版本变了就必须有人再看一眼，
-     * 软件只负责把"已看过"这件事记下来。
-     */
     fun revalidateGraphEdge(edgeId: String) {
-        val edge = userGraph.edge(edgeId) ?: run {
+        if (!graph.ownsEdge(edgeId)) {
+            // 扩展包带来的关系不按版本复核：包自带版本号，重装新版即可
             if (extensionNameOf(edgeId) != null) {
                 banner = Banner("扩展包带来的关系不按版本复核：包自带版本号，重装新版即可", isError = true)
             }
             return
         }
-        scope.launch {
-            graphBusy = true
-            val now = deps.clock.nowMillis()
-            val refs = listOf(edge.source, edge.target)
-            val located = deps.bankRepository.locate(refs)
-            val fresh = refs.mapNotNull { ref ->
-                located[ref]?.let { fact ->
-                    snapshotOf(ref, QuestionFact(fact.bankTitle, fact.promptMarkdown, fact.contentRevision), now)
-                }
+        scope.launch { graph.revalidate(edgeId).announce() }
+    }
+
+    /**
+     * 写盘之后的收尾：说一句，并且只在"当前停在编辑器"时才离开。
+     *
+     * 删除在列表页与编辑页都能点到：列表页删完还留在列表，编辑页删完必须退出去，
+     * 否则留在一条已经不存在的记录上。同一条规则用在保存上刚好也成立。
+     */
+    private fun GraphWrite.announce() {
+        when (this) {
+            is GraphWrite.Saved -> {
+                if (screen == Screen.GRAPH_EDITOR) screen = graphEditorReturn
+                banner = Banner(message, isError = false)
             }
-            if (fresh.isEmpty()) {
-                graphBusy = false
-                banner = Banner("两端现在都定位不到，无法复核（原快照已保留）", isError = true)
-                return@launch
-            }
-            val next = userGraph.withSnapshots(fresh).withEdge(edge.copy(updatedAtMillis = now))
-            deps.graphRepository.save(next)
-            userGraph = next
-            graph = next.mergedWith(activeExtensions)
-            graphBusy = false
-            refreshGraphView()
-            banner = Banner("已按当前内容复核", isError = false)
+
+            is GraphWrite.Blocked -> if (message != null) banner = Banner(message, isError = true)
         }
     }
 
+
+    /** 当前作答中的题目引用；不在练习页就是 null。 */
     private fun currentSessionRef(): QuestionRef? {
         val active = practice.session ?: return null
         val question = active.current?.question ?: return null
         return QuestionRef(active.bankId, question.questionId)
-    }
-
-    private suspend fun refreshGraph() {
-        userGraph = deps.graphRepository.load()
-        graph = userGraph.mergedWith(activeExtensions)
-        refreshGraphView()
-    }
-
-    private suspend fun refreshGraphView() {
-        val refs = graph.refs()
-        val located = if (refs.isEmpty()) emptyMap() else deps.bankRepository.locate(refs)
-        val lookup = object : GraphLookup {
-            override fun bankTitle(bankId: String): String? =
-                banks.firstOrNull { it.bankId == bankId }?.title
-
-            override fun question(ref: QuestionRef): QuestionFact? =
-                located[ref]?.let { QuestionFact(it.bankTitle, it.promptMarkdown, it.contentRevision) }
-        }
-        graphView = resolveGraph(graph, lookup)
     }
 
     /**
@@ -1772,7 +1478,7 @@ class AppController(
     private fun checkHardDependencies() {
         val ref = currentSessionRef()
         val targets = ref?.let { source ->
-            graph.edges
+            graph.merged.edges
                 .filter { it.source == source && it.dependency == DependencyKind.HARD }
                 .map { it.target }
                 .distinct()
@@ -1788,15 +1494,11 @@ class AppController(
             practice.reportBlockedDependencies(
                 targets.count { target ->
                     val fact = located[target] ?: return@count true
-                    val snapshot = graph.snapshotOf(target)
+                    val snapshot = graph.merged.snapshotOf(target)
                     snapshot != null && snapshot.contentRevision != fact.contentRevision
                 },
             )
         }
-    }
-
-    private companion object {
-        const val GRAPH_SEARCH_LIMIT = 8
     }
 
     // ---- 工具箱 ----
@@ -1979,7 +1681,7 @@ class AppController(
             is ExtensionOutcome.Installed -> {
                 val pack = outcome.pack
                 refreshExtensions()
-                refreshMergedGraph()
+                graph.rematch()
                 screen = Screen.EXTENSIONS
                 val pending = pack.stateIn(installedBankIds) == ExtensionState.PENDING
                 banner = Banner(

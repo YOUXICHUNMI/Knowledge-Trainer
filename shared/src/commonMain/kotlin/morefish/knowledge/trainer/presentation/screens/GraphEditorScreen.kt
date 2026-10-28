@@ -27,7 +27,7 @@ import morefish.knowledge.trainer.domain.graph.GraphRelation
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.Severity
 import morefish.knowledge.trainer.presentation.AppController
-import morefish.knowledge.trainer.presentation.GraphPickSide
+import morefish.knowledge.trainer.presentation.graph.GraphPickSide
 import morefish.knowledge.trainer.presentation.richtext.Markdown
 import morefish.knowledge.trainer.presentation.richtext.RichText
 import morefish.knowledge.trainer.presentation.theme.Palette
@@ -64,7 +64,7 @@ fun GraphEditorScreen(controller: AppController) {
     )
 
     ScreenScaffold(
-        title = if (controller.graphEditing) "编辑关系" else "建立关系",
+        title = if (controller.graph.editing) "编辑关系" else "建立关系",
         subtitle = "关系只存在你亲手连的地方",
         overline = "个人图谱",
         onBack = controller::closeGraphEditor,
@@ -75,14 +75,14 @@ fun GraphEditorScreen(controller: AppController) {
             EndpointPicker(
                 controller = controller,
                 side = GraphPickSide.SOURCE,
-                ref = controller.graphSource,
+                ref = controller.graph.source,
                 hint = "从哪道题出发",
                 fieldShape = fieldShape,
                 fieldColors = fieldColors,
             )
 
             Spacer(Modifier.height(16.dp))
-            SectionTitle("关系", controller.graphDraftRelation.label)
+            SectionTitle("关系", controller.graph.draftRelation.label)
             Spacer(Modifier.height(8.dp))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -91,43 +91,43 @@ fun GraphEditorScreen(controller: AppController) {
                 GraphRelation.entries.forEach { relation ->
                     KtChip(
                         label = "${relation.glyph} ${relation.label}",
-                        selected = controller.graphDraftRelation == relation,
-                        onClick = { controller.selectGraphRelation(relation) },
+                        selected = controller.graph.draftRelation == relation,
+                        onClick = { controller.graph.selectRelation(relation) },
                     )
                 }
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                controller.graphDraftRelation.hint,
+                controller.graph.draftRelation.hint,
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Muted,
             )
 
             Spacer(Modifier.height(14.dp))
-            SectionTitle("对判题的影响", controller.graphDraftDependency.label)
+            SectionTitle("对判题的影响", controller.graph.draftDependency.label)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 KtChip(
                     label = DependencyKind.NAVIGATION.label,
-                    selected = controller.graphDraftDependency == DependencyKind.NAVIGATION,
-                    onClick = { controller.selectGraphDependency(DependencyKind.NAVIGATION) },
+                    selected = controller.graph.draftDependency == DependencyKind.NAVIGATION,
+                    onClick = { controller.graph.selectDependency(DependencyKind.NAVIGATION) },
                 )
                 KtChip(
                     label = DependencyKind.HARD.label,
-                    selected = controller.graphDraftDependency == DependencyKind.HARD,
-                    enabled = controller.graphHardAllowed,
-                    onClick = { controller.selectGraphDependency(DependencyKind.HARD) },
+                    selected = controller.graph.draftDependency == DependencyKind.HARD,
+                    enabled = controller.graph.hardAllowed,
+                    onClick = { controller.graph.selectDependency(DependencyKind.HARD) },
                 )
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                if (controller.graphHardAllowed) {
+                if (controller.graph.hardAllowed) {
                     "硬依赖缺失时，本题会明确标注「依据暂停」，不会拿快照凑合判题。"
                 } else {
-                    "「${controller.graphDraftRelation.label}」是对称关系，说不出谁依赖谁，只能做导航。"
+                    "「${controller.graph.draftRelation.label}」是对称关系，说不出谁依赖谁，只能做导航。"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (controller.graphHardAllowed) Palette.Muted else Palette.Pending,
+                color = if (controller.graph.hardAllowed) Palette.Muted else Palette.Pending,
             )
 
             Spacer(Modifier.height(16.dp))
@@ -136,8 +136,8 @@ fun GraphEditorScreen(controller: AppController) {
             EndpointPicker(
                 controller = controller,
                 side = GraphPickSide.TARGET,
-                ref = controller.graphTarget,
-                hint = when (controller.graphDraftRelation) {
+                ref = controller.graph.target,
+                hint = when (controller.graph.draftRelation) {
                     GraphRelation.PREREQUISITE -> "前置知识：先学它"
                     GraphRelation.EXPLAINS -> "判题依据来自它"
                     else -> "要连过去的另一道题"
@@ -149,11 +149,11 @@ fun GraphEditorScreen(controller: AppController) {
 
         Spacer(Modifier.height(12.dp))
         Panel {
-            SectionTitle("备注", "${controller.graphDraftNote.length} 字")
+            SectionTitle("备注", "${controller.graph.draftNote.length} 字")
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value = controller.graphDraftNote,
-                onValueChange = controller::updateGraphNote,
+                value = controller.graph.draftNote,
+                onValueChange = controller.graph::updateNote,
                 placeholder = { Text("为什么把这两道题连起来？（支持 Markdown 与 $...$ 公式）") },
                 minLines = 3,
                 maxLines = 6,
@@ -161,11 +161,11 @@ fun GraphEditorScreen(controller: AppController) {
                 shape = fieldShape,
                 colors = fieldColors,
             )
-            if (controller.graphDraftNote.isNotBlank()) {
+            if (controller.graph.draftNote.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Panel(background = Palette.PanelMuted, padding = 12.dp) {
                     RichText(
-                        text = controller.graphDraftNote,
+                        text = controller.graph.draftNote,
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.Ink,
                     )
@@ -173,10 +173,10 @@ fun GraphEditorScreen(controller: AppController) {
             }
         }
 
-        if (controller.graphIssues.isNotEmpty()) {
+        if (controller.graph.issues.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Panel(background = Palette.WrongSoft, borderColor = Palette.Wrong) {
-                controller.graphIssues.forEach { issue ->
+                controller.graph.issues.forEach { issue ->
                     Text(
                         (if (issue.severity == Severity.ERROR) "· " else "· 提醒：") + issue.message,
                         style = MaterialTheme.typography.bodySmall,
@@ -190,16 +190,16 @@ fun GraphEditorScreen(controller: AppController) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton(
                 text = when {
-                    controller.graphBusy -> "保存中…"
-                    controller.graphEditing -> "保存修改"
+                    controller.graph.busy -> "保存中…"
+                    controller.graph.editing -> "保存修改"
                     else -> "保存关系"
                 },
                 onClick = controller::saveGraphEdge,
-                enabled = !controller.graphBusy,
+                enabled = !controller.graph.busy,
             )
             GhostButton("返回", onClick = controller::closeGraphEditor)
-            if (controller.graphEditing) {
-                val edgeId = controller.graphEditingEdgeId
+            if (controller.graph.editing) {
+                val edgeId = controller.graph.editingEdgeId
                 if (edgeId != null) {
                     GhostButton(
                         "删除",
@@ -221,13 +221,13 @@ private fun EndpointPicker(
     fieldShape: RoundedCornerShape,
     fieldColors: androidx.compose.material3.TextFieldColors,
 ) {
-    val picking = controller.graphPickSide == side
-    val card = controller.graphCardOf(ref)
+    val picking = controller.graph.pickSide == side
+    val card = controller.graph.cardOf(ref)
 
     if (picking) {
         OutlinedTextField(
-            value = controller.graphQuery,
-            onValueChange = controller::updateGraphQuery,
+            value = controller.graph.query,
+            onValueChange = controller.graph::updateQuery,
             placeholder = { Text("输入题干关键词（跨全部题库搜索）") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -236,9 +236,9 @@ private fun EndpointPicker(
         )
         Spacer(Modifier.height(8.dp))
 
-        if (controller.graphHits.isEmpty()) {
+        if (controller.graph.hits.isEmpty()) {
             Text(
-                if (controller.graphQuery.isBlank()) {
+                if (controller.graph.query.isBlank()) {
                     "搜到的是真实存在的题；软件不会按标题相似的题库猜一个。"
                 } else {
                     "没有匹配的题目。换个关键词，或先导入对应题库。"
@@ -247,12 +247,12 @@ private fun EndpointPicker(
                 color = Palette.Faint,
             )
         } else {
-            controller.graphHits.forEach { hit ->
+            controller.graph.hits.forEach { hit ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .clickable { controller.pickGraphHit(hit) }
+                        .clickable { controller.graph.pickHit(hit) }
                         .padding(vertical = 8.dp, horizontal = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -279,14 +279,14 @@ private fun EndpointPicker(
         }
 
         Spacer(Modifier.height(6.dp))
-        GhostButton("取消选择", onClick = controller::cancelGraphPick)
+        GhostButton("取消选择", onClick = controller.graph::cancelPick)
         return
     }
 
     if (ref == null) {
         Text(hint, style = MaterialTheme.typography.bodySmall, color = Palette.Faint)
         Spacer(Modifier.height(8.dp))
-        SecondaryButton("搜索并选择", onClick = { controller.beginGraphPick(side) }, leading = "⌕")
+        SecondaryButton("搜索并选择", onClick = { controller.graph.beginPick(side) }, leading = "⌕")
         return
     }
 
@@ -314,5 +314,5 @@ private fun EndpointPicker(
         )
     }
     Spacer(Modifier.height(6.dp))
-    GhostButton("换一道", onClick = { controller.beginGraphPick(side) })
+    GhostButton("换一道", onClick = { controller.graph.beginPick(side) })
 }

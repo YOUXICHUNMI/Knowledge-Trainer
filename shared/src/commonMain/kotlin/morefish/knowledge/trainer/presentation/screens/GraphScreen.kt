@@ -47,9 +47,9 @@ import morefish.knowledge.trainer.presentation.ui.StatTile
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GraphScreen(controller: AppController) {
-    val view = controller.graphView
-    val edges = controller.graphFilteredEdges
-    val focus = controller.graphQuestionFilter
+    val view = controller.graph.view
+    val edges = controller.graph.filteredEdges
+    val focus = controller.graph.questionFilter
 
     ScreenScaffold(
         title = "知识图谱",
@@ -100,13 +100,13 @@ fun GraphScreen(controller: AppController) {
         }
 
         if (focus != null) {
-            val card = controller.graphCardOf(focus)
+            val card = controller.graph.cardOf(focus)
             Spacer(Modifier.height(12.dp))
             Panel(accent = Palette.Accent) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Pill("只看这道题", Palette.Accent, Palette.AccentSoft)
                     Spacer(Modifier.weight(1f))
-                    GhostButton("看全部关系", onClick = controller::clearGraphFocus)
+                    GhostButton("看全部关系", onClick = controller.graph::clearFocus)
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -134,20 +134,20 @@ fun GraphScreen(controller: AppController) {
         ) {
             KtChip(
                 label = "全部 ${view.relationCount}",
-                selected = controller.graphRelationFilter == null,
-                onClick = { controller.filterGraphRelation(null) },
+                selected = controller.graph.relationFilter == null,
+                onClick = { controller.graph.filterRelation(null) },
             )
             GraphRelation.entries.forEach { relation ->
                 KtChip(
                     label = "${relation.label} ${view.relationCount(relation)}",
-                    selected = controller.graphRelationFilter == relation,
-                    onClick = { controller.filterGraphRelation(relation) },
+                    selected = controller.graph.relationFilter == relation,
+                    onClick = { controller.graph.filterRelation(relation) },
                 )
             }
             KtChip(
                 label = "只看问题 ${view.problemRefCount}",
-                selected = controller.graphProblemsOnly,
-                onClick = controller::toggleGraphProblemsOnly,
+                selected = controller.graph.problemsOnly,
+                onClick = controller.graph::toggleProblemsOnly,
             )
         }
 

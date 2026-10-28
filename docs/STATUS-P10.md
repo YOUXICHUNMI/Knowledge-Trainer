@@ -114,7 +114,7 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **621 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 13） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **622 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 14） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
 | 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
@@ -156,7 +156,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，621 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，622 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -353,6 +353,24 @@ ID 是进度、复核、错题本匹配题目的唯一依据，撞了就会让�
 
 文件从 2476 行降到 2247 行；620 → 621 用例全绿，行为不变。
 
+### 12. 组合根拆分：第十刀是知识图谱
+
+新增 `presentation/graph/GraphController.kt`（439 行）：图谱本体、与生效扩展包的合并视图、
+解析帧、筛选、跨库搜题（含防抖）、编辑草稿，以及保存 / 删除 / 复核三条写路径。
+
+这一刀搬的是**唯一一处"显示的东西不等于存的东西"**：磁盘上只有用户手建的那一份，界面上看到的
+却是"手建 + 生效中扩展包"。这层合并以前夹在每次 `refresh()` 里，谁也没法一眼确认"删了包关系
+还在不在"。跟着搬的还有快照与新鲜度：关系存的是两端题目的内容版本，题库换一版就必须有人再看一眼，
+软件只负责把"已看过"记下来。
+
+边界：导航留在组合根（写盘返回 `GraphWrite`，删除在列表页与编辑页的下一屏不同）、
+扩展包的归属判定留在组合根（要查包清单）、题库标题由外部递入（题库缺失时还能借待继续会话的标题）。
+
+新增用例 `deletingAnEdgeFromTheListRefreshesTheListAndStaysThere`：列表页删完留在列表，
+且解析帧必须跟着变 —— 模型空了视图没空，列表就会继续显示一行已经不存在的关系。
+
+文件从 2247 行降到 1949 行；621 → 622 用例全绿，行为不变。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
@@ -362,8 +380,8 @@ ID 是进度、复核、错题本匹配题目的唯一依据，撞了就会让�
 | MSI 只在本机试装流程 | 没有在干净虚拟机里完整走"安装 → 运行 → 升级 → 卸载"，升级兼容性只有 `upgradeUuid` 这一层保证 |
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
-| 组合根仍偏大 | 已从 3371 行降到 2247 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习九刀），还有 2 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 621 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
+| 组合根仍偏大 | 已从 3371 行降到 1949 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱十刀），还有 1 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 622 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 

@@ -181,7 +181,7 @@ fun HomeScreen(controller: AppController) {
                     leading = "⊞",
                 )
                 SecondaryButton(
-                    if (controller.graph.edges.isEmpty()) "图谱" else "图谱 ${controller.graph.edges.size}",
+                    if (controller.graph.merged.edges.isEmpty()) "图谱" else "图谱 ${controller.graph.merged.edges.size}",
                     onClick = { controller.openGraph() },
                     leading = "⇄",
                 )
