@@ -88,7 +88,7 @@ import morefish.knowledge.trainer.presentation.ui.verdictSoft
 
 @Composable
 fun PracticeScreen(controller: AppController) {
-    val session = controller.session
+    val session = controller.practice.session
     val item = session?.current
 
     if (session == null || item == null) {
@@ -98,7 +98,7 @@ fun PracticeScreen(controller: AppController) {
         return
     }
 
-    val feedback = controller.feedback
+    val feedback = controller.practice.feedback
     val total = session.items.size
     val done = session.cursor + if (feedback != null) 1 else 0
 
@@ -108,7 +108,7 @@ fun PracticeScreen(controller: AppController) {
             append(session.planLabel.ifBlank { "练习" })
             append(" · ").append(item.question.type.label)
             // 多语言题库要说清这一场是哪种语言，否则"题变了"会被当成题库出错
-            controller.sessionLocaleLabel?.let { append(" · ").append(it) }
+            controller.practice.sessionLocaleLabel?.let { append(" · ").append(it) }
             append(" · 已答 ").append(session.answeredCount).append(" / ").append(total)
         },
         overline = "第 ${session.cursor + 1} 题 / 共 $total 题",
@@ -196,7 +196,7 @@ private fun QuestionCard(item: SessionItem, index: Int, total: Int, controller: 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Pill(question.type.label, Palette.Accent, Palette.AccentSoft)
             // 本场选了某语言、这题却没有译文：必须标出来，不能让人以为看到的是译文
-            if (controller.currentQuestionShowsOriginal) {
+            if (controller.practice.currentQuestionShowsOriginal) {
                 Spacer(Modifier.width(6.dp))
                 Pill("原文", Palette.Pending, Palette.PendingSoft)
             }
@@ -230,12 +230,12 @@ private fun QuestionCard(item: SessionItem, index: Int, total: Int, controller: 
         )
         QuestionFigure(
             question = question,
-            bankId = controller.session?.bankId,
+            bankId = controller.practice.session?.bankId,
             loadMedia = controller::loadMedia,
             modifier = Modifier.padding(top = 12.dp),
         )
         // 出处放在题面底下：作答之前就该知道这道题哪来的
-        controller.currentBank?.provenance?.let { provenance ->
+        controller.practice.currentBank?.provenance?.let { provenance ->
             ProvenanceLine(
                 question = question,
                 provenance = provenance,
@@ -251,7 +251,7 @@ private fun QuestionCard(item: SessionItem, index: Int, total: Int, controller: 
  */
 @Composable
 private fun NoteLink(controller: AppController, questionId: String) {
-    val bankId = controller.session?.bankId
+    val bankId = controller.practice.session?.bankId
     val existing = bankId?.let { controller.notes.forQuestion(it, questionId) }
     val source = remember { MutableInteractionSource() }
     Row(
@@ -287,12 +287,12 @@ private fun NoteLink(controller: AppController, questionId: String) {
  */
 @Composable
 private fun GraphLink(controller: AppController) {
-    val session = controller.session
+    val session = controller.practice.session
     val question = session?.current?.question
     val ref = if (session != null && question != null) QuestionRef(session.bankId, question.questionId) else null
     val count = ref?.let { controller.graphEdgeCountFor(it) } ?: 0
     val tint = when {
-        controller.blockedHardDependencies > 0 -> Palette.Wrong
+        controller.practice.blockedHardDependencies > 0 -> Palette.Wrong
         count > 0 -> Palette.Accent
         else -> Palette.Muted
     }
@@ -325,7 +325,7 @@ private fun GraphLink(controller: AppController) {
  */
 @Composable
 private fun ToolLink(controller: AppController) {
-    val used = controller.usedToolsForCurrentQuestion
+    val used = controller.practice.usedToolsForCurrentQuestion
     val source = remember { MutableInteractionSource() }
     val tint = if (used) Palette.Pending else Palette.Muted
     Row(
@@ -511,14 +511,14 @@ private fun aiSoft(state: AiRecordState): Color = when (state) {
 @Composable
 private fun AnswerArea(item: SessionItem, controller: AppController, revealed: Boolean) {
     val question = item.question
-    val detail = controller.feedback?.evaluation?.detail
+    val detail = controller.practice.feedback?.evaluation?.detail
     val choiceDetail = detail as? EvaluationDetail.Choice
 
     if (question.type == QuestionType.SHORT_ANSWER) {
         val isKeywords = question.grading is GradingSpec.Keywords
         OutlinedTextField(
-            value = controller.textAnswer,
-            onValueChange = controller::updateTextAnswer,
+            value = controller.practice.textAnswer,
+            onValueChange = controller.practice::updateTextAnswer,
             enabled = !revealed,
             label = { Text(if (isKeywords) "写出你的回答" else "默写标准答案") },
             placeholder = {
@@ -555,11 +555,11 @@ private fun AnswerArea(item: SessionItem, controller: AppController, revealed: B
                 option = option,
                 label = item.labelOf(option.optionId),
                 multiple = question.type == QuestionType.MULTIPLE_CHOICE,
-                selected = controller.selectedOptionIds.contains(option.optionId),
+                selected = controller.practice.selectedOptionIds.contains(option.optionId),
                 expected = choiceDetail?.expected?.contains(option.optionId) == true,
                 revealed = revealed,
                 enabled = !revealed,
-                onClick = { controller.toggleOption(option.optionId) },
+                onClick = { controller.practice.toggleOption(option.optionId) },
             )
             Spacer(Modifier.height(9.dp))
         }
@@ -570,7 +570,7 @@ private fun AnswerArea(item: SessionItem, controller: AppController, revealed: B
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OrderingArea(item: SessionItem, controller: AppController, revealed: Boolean) {
-    val ordered = controller.orderedOptionIds
+    val ordered = controller.practice.orderedOptionIds
     val fragments = item.orderedOptions()
 
     SectionTitle("你的排列（点击片段移除）")
@@ -605,7 +605,7 @@ private fun OrderingArea(item: SessionItem, controller: AppController, revealed:
                             value = true,
                             enabled = !revealed,
                             role = Role.Button,
-                            onValueChange = { controller.removeFragmentAt(index) },
+                            onValueChange = { controller.practice.removeFragmentAt(index) },
                         )
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -643,7 +643,7 @@ private fun OrderingArea(item: SessionItem, controller: AppController, revealed:
                         value = used,
                         enabled = !revealed && !used,
                         role = Role.Button,
-                        onValueChange = { controller.appendFragment(fragment.optionId) },
+                        onValueChange = { controller.practice.appendFragment(fragment.optionId) },
                     )
                     .padding(horizontal = 12.dp, vertical = 9.dp),
             ) {
@@ -784,9 +784,9 @@ private fun MarkSymbol(text: String, color: Color) {
 private fun SubmitBar(controller: AppController, item: SessionItem) {
     val question = item.question
     val hasAnswer = if (question.type == QuestionType.SHORT_ANSWER) {
-        controller.textAnswer.isNotBlank()
+        controller.practice.textAnswer.isNotBlank()
     } else {
-        controller.selectedOptionIds.isNotEmpty()
+        controller.practice.selectedOptionIds.isNotEmpty()
     }
 
     Column {
@@ -795,22 +795,22 @@ private fun SubmitBar(controller: AppController, item: SessionItem) {
                 Text(
                     when (question.type) {
                         QuestionType.MULTIPLE_CHOICE ->
-                            if (controller.selectedOptionIds.isEmpty()) "已选 0 项 · 可多选，选完手动提交"
-                            else "已选 ${controller.selectedOptionIds.size} 项 · 完全匹配才算正确"
+                            if (controller.practice.selectedOptionIds.isEmpty()) "已选 0 项 · 可多选，选完手动提交"
+                            else "已选 ${controller.practice.selectedOptionIds.size} 项 · 完全匹配才算正确"
 
                         QuestionType.SHORT_ANSWER -> "逐字符比较，标点、空格、换行都参与判定"
-                        else -> if (controller.selectedOptionIds.isEmpty()) "选择一个选项后提交" else "已选择，可以提交"
+                        else -> if (controller.practice.selectedOptionIds.isEmpty()) "选择一个选项后提交" else "已选择，可以提交"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (hasAnswer) Palette.Muted else Palette.Faint,
                 )
             }
             Spacer(Modifier.width(12.dp))
-            PrimaryButton("提交作答", onClick = controller::submit, enabled = hasAnswer)
+            PrimaryButton("提交作答", onClick = controller.practice::submit, enabled = hasAnswer)
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            GhostButton("放弃本题", onClick = controller::abandon)
+            GhostButton("放弃本题", onClick = controller.practice::abandon)
             GhostButton("结束本次", onClick = controller::finish)
         }
     }
@@ -852,7 +852,7 @@ private fun FavoriteToggle(active: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun FeedbackPanel(controller: AppController) {
-    val feedback = controller.feedback ?: return
+    val feedback = controller.practice.feedback ?: return
     val evaluation = feedback.evaluation
     val item = feedback.session.current ?: return
     val question = item.question
@@ -874,9 +874,9 @@ private fun FeedbackPanel(controller: AppController) {
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.Muted,
                 )
-                if (controller.blockedHardDependencies > 0) {
+                if (controller.practice.blockedHardDependencies > 0) {
                     Text(
-                        "本题有 ${controller.blockedHardDependencies} 条判题硬依赖缺失，相关依据已暂停",
+                        "本题有 ${controller.practice.blockedHardDependencies} 条判题硬依赖缺失，相关依据已暂停",
                         style = MaterialTheme.typography.bodySmall,
                         color = Palette.Wrong,
                     )

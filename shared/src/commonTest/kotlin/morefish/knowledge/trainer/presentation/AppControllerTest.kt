@@ -54,12 +54,12 @@ class AppControllerTest {
     }
 
     private fun answerCurrent(controller: AppController) {
-        val question = assertNotNull(controller.currentQuestion)
+        val question = assertNotNull(controller.practice.currentQuestion)
         when (question.type) {
-            QuestionType.SHORT_ANSWER -> controller.updateTextAnswer(question.answerText.orEmpty())
-            else -> question.correctOptionIds.forEach { controller.toggleOption(it) }
+            QuestionType.SHORT_ANSWER -> controller.practice.updateTextAnswer(question.answerText.orEmpty())
+            else -> question.correctOptionIds.forEach { controller.practice.toggleOption(it) }
         }
-        controller.submit()
+        controller.practice.submit()
     }
 
     @Test
@@ -72,23 +72,23 @@ class AppControllerTest {
         val bank = first.banks.single()
         first.startPractice(bank, questionCount = 3)
         assertEquals(Screen.PRACTICE, first.screen)
-        assertEquals(3, first.session!!.items.size)
+        assertEquals(3, first.practice.session!!.items.size)
 
         answerCurrent(first)
         testScheduler.advanceUntilIdle()
-        assertEquals(1, first.session!!.answeredCount)
+        assertEquals(1, first.practice.session!!.answeredCount)
 
         first.next()
         testScheduler.advanceUntilIdle()
-        assertEquals(1, first.session!!.cursor)
+        assertEquals(1, first.practice.session!!.cursor)
 
         // 第 2 题留一个未提交的草稿
-        val secondQuestion = assertNotNull(first.session!!.current?.question)
+        val secondQuestion = assertNotNull(first.practice.session!!.current?.question)
         val draftOption = secondQuestion.options.firstOrNull()?.optionId
         if (secondQuestion.type == QuestionType.SHORT_ANSWER) {
-            first.updateTextAnswer("写到一半")
+            first.practice.updateTextAnswer("写到一半")
         } else if (draftOption != null) {
-            first.toggleOption(draftOption)
+            first.practice.toggleOption(draftOption)
         }
         testScheduler.advanceUntilIdle()
 
@@ -101,7 +101,7 @@ class AppControllerTest {
         restarted.refresh()
         testScheduler.advanceUntilIdle()
 
-        val paused = assertNotNull(restarted.resumable)
+        val paused = assertNotNull(restarted.practice.resumable)
         assertEquals(1, paused.answeredCount)
         assertEquals(1, paused.firstUnansweredIndex)
 
@@ -109,13 +109,13 @@ class AppControllerTest {
         testScheduler.advanceUntilIdle()
 
         assertEquals(Screen.PRACTICE, restarted.screen)
-        val resumed = assertNotNull(restarted.session)
+        val resumed = assertNotNull(restarted.practice.session)
         assertEquals(1, resumed.cursor)
         assertEquals(1, resumed.answeredCount)
         if (secondQuestion.type == QuestionType.SHORT_ANSWER) {
-            assertEquals("写到一半", restarted.textAnswer)
+            assertEquals("写到一半", restarted.practice.textAnswer)
         } else {
-            assertEquals(setOfNotNull(draftOption), restarted.selectedOptionIds)
+            assertEquals(setOfNotNull(draftOption), restarted.practice.selectedOptionIds)
         }
     }
 
@@ -134,7 +134,7 @@ class AppControllerTest {
 
         val second = controller(storage, testScheduler)
         second.refresh()
-        assertNotNull(second.resumable)
+        assertNotNull(second.practice.resumable)
         second.discardResumable()
         testScheduler.advanceUntilIdle()
 
@@ -142,8 +142,37 @@ class AppControllerTest {
         third.refresh()
         testScheduler.advanceUntilIdle()
 
-        assertNull(third.resumable)
+        assertNull(third.practice.resumable)
         assertEquals(1, third.history.size, "已提交的记录必须保留")
+    }
+
+    /**
+     * 最后一题答完、但没点"查看总结"就退出：下次启动不该出现"继续练习"。
+     *
+     * 会话文件里它还写着"可继续"，实际却已经没有下一题 —— 留着会让人点进去看到一道空题。
+     * 这条收尾规则现在归练习控制器（会话文件 + 历史合并之后才看得出"做完了"），
+     * 以前埋在整库重读里，没人知道它在替用户收拾现场。
+     */
+    @Test
+    fun aSessionWithNothingLeftToAnswerIsClearedInsteadOfOfferedAsResumable() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+
+        val first = controller(storage, testScheduler)
+        first.refresh()
+        first.startPractice(first.banks.single(), questionCount = 1)
+
+        // 答完就走：不点"下一题"，因此没有触发收尾
+        answerCurrent(first)
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, first.practice.session!!.answeredCount)
+
+        val restarted = controller(storage, testScheduler)
+        restarted.refresh()
+        testScheduler.advanceUntilIdle()
+
+        assertNull(restarted.practice.resumable, "已经没有题可答，就不该再提供继续入口")
+        assertEquals(1, restarted.history.size, "答过的记录仍在历史里")
     }
 
     @Test
@@ -190,7 +219,7 @@ class AppControllerTest {
         controller.startPlannedPractice()
         testScheduler.advanceUntilIdle()
 
-        val session = assertNotNull(controller.session)
+        val session = assertNotNull(controller.practice.session)
         assertTrue(session.planLabel.contains("全部"))
         assertTrue(session.planLabel.contains("混合题型"))
         assertEquals(6, session.items.size)
@@ -315,14 +344,14 @@ class AppControllerTest {
         val first = controller(storage, testScheduler)
         first.refresh()
         first.startPractice(first.banks.single(), questionCount = 2)
-        val question = assertNotNull(first.currentQuestion)
+        val question = assertNotNull(first.practice.currentQuestion)
 
         first.openNoteForCurrentQuestion()
         assertEquals(Screen.NOTE_EDITOR, first.screen)
         val seed = assertNotNull(first.noteSeed)
         assertEquals(NoteScope.QUESTION, seed.scope)
         assertEquals(question.questionId, seed.questionId)
-        assertEquals(first.session!!.bankId, seed.bankId, "题目笔记必须自动挂上当前题库")
+        assertEquals(first.practice.session!!.bankId, seed.bankId, "题目笔记必须自动挂上当前题库")
 
         first.saveNote(seed.copy(bodyMarkdown = " 先判断量纲，再代入数值 "))
         testScheduler.advanceUntilIdle()
@@ -423,7 +452,7 @@ class AppControllerTest {
         testScheduler.advanceUntilIdle()
         c.closeNoteEditor()
         assertEquals(Screen.PRACTICE, c.screen)
-        assertNotNull(c.currentQuestion)
+        assertNotNull(c.practice.currentQuestion)
 
         // 从笔记列表进入：回来仍是列表
         c.openNotes()
@@ -504,7 +533,7 @@ class AppControllerTest {
         val c = controller(InMemoryTextStorage(), testScheduler)
         c.openToolbox()
         assertEquals(Screen.TOOLBOX, c.screen)
-        assertFalse(c.usedToolsForCurrentQuestion, "不在做题时用工具，不该记到某道题头上")
+        assertFalse(c.practice.usedToolsForCurrentQuestion, "不在做题时用工具，不该记到某道题头上")
         c.closeToolbox()
         assertEquals(Screen.HOME, c.screen)
     }
@@ -518,33 +547,33 @@ class AppControllerTest {
         c.startPractice(c.banks.single(), questionCount = 2)
 
         // 先写一半，再去看工具：回来输入不能丢
-        val question = assertNotNull(c.currentQuestion)
+        val question = assertNotNull(c.practice.currentQuestion)
         if (question.type == QuestionType.SHORT_ANSWER) {
-            c.updateTextAnswer("写到一半")
+            c.practice.updateTextAnswer("写到一半")
         } else {
-            c.toggleOption(question.options.first().optionId)
+            c.practice.toggleOption(question.options.first().optionId)
         }
-        val textBefore = c.textAnswer
-        val selectedBefore = c.selectedOptionIds
-        val orderedBefore = c.orderedOptionIds
+        val textBefore = c.practice.textAnswer
+        val selectedBefore = c.practice.selectedOptionIds
+        val orderedBefore = c.practice.orderedOptionIds
 
         c.openToolbox()
         assertEquals(Screen.TOOLBOX, c.screen)
-        assertTrue(c.usedToolsForCurrentQuestion, "从练习页打开工具即算用过")
+        assertTrue(c.practice.usedToolsForCurrentQuestion, "从练习页打开工具即算用过")
 
         c.closeToolbox()
         assertEquals(Screen.PRACTICE, c.screen)
-        assertEquals(textBefore, c.textAnswer)
-        assertEquals(selectedBefore, c.selectedOptionIds)
-        assertEquals(orderedBefore, c.orderedOptionIds)
+        assertEquals(textBefore, c.practice.textAnswer)
+        assertEquals(selectedBefore, c.practice.selectedOptionIds)
+        assertEquals(orderedBefore, c.practice.orderedOptionIds)
 
         answerCurrent(c)
         testScheduler.advanceUntilIdle()
-        val attempt = assertNotNull(c.feedback).attempt
+        val attempt = assertNotNull(c.practice.feedback).attempt
         assertTrue(attempt.usedTools, "用了工具就要在历史里留下痕迹")
 
         c.next()
-        assertFalse(c.usedToolsForCurrentQuestion, "换一题必须重新计")
+        assertFalse(c.practice.usedToolsForCurrentQuestion, "换一题必须重新计")
     }
 
     @Test
@@ -596,7 +625,7 @@ class AppControllerTest {
 
         c.startPractice(c.banks.single(), questionCount = 1)
         testScheduler.advanceUntilIdle()
-        val ref = QuestionRef(c.session!!.bankId, assertNotNull(c.currentQuestion).questionId)
+        val ref = QuestionRef(c.practice.session!!.bankId, assertNotNull(c.practice.currentQuestion).questionId)
 
         c.openGraphForCurrentQuestion()
         testScheduler.advanceUntilIdle()
@@ -605,7 +634,7 @@ class AppControllerTest {
 
         c.closeGraph()
         assertEquals(Screen.PRACTICE, c.screen)
-        assertNotNull(c.currentQuestion, "看图谱不该弄丢正在做的那道题")
+        assertNotNull(c.practice.currentQuestion, "看图谱不该弄丢正在做的那道题")
     }
 
     @Test
@@ -710,11 +739,11 @@ class AppControllerTest {
         c.startPractice(c.banks.single(), questionCount = 1)
         testScheduler.advanceUntilIdle()
 
-        assertEquals(1, c.blockedHardDependencies, "目标题库不在本机，判题依据必须标成暂停")
+        assertEquals(1, c.practice.blockedHardDependencies, "目标题库不在本机，判题依据必须标成暂停")
 
         answerCurrent(c)
         testScheduler.advanceUntilIdle()
-        assertEquals(1, c.blockedHardDependencies, "提交后仍然如实标注，不因为答完了就消失")
+        assertEquals(1, c.practice.blockedHardDependencies, "提交后仍然如实标注，不因为答完了就消失")
     }
 
     @Test
@@ -748,7 +777,7 @@ class AppControllerTest {
         c.startPractice(c.banks.single(), questionCount = 1)
         testScheduler.advanceUntilIdle()
 
-        assertEquals(0, c.blockedHardDependencies, "导航关系缺了只是少条线索，不该被说成判题暂停")
+        assertEquals(0, c.practice.blockedHardDependencies, "导航关系缺了只是少条线索，不该被说成判题暂停")
         c.openGraph()
         testScheduler.advanceUntilIdle()
         assertTrue(c.graphView.problemRefCount > 0, "但在图谱页仍然要如实标出缺失")

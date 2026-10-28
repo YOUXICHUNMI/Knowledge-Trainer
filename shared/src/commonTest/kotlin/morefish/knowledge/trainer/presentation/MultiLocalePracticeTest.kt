@@ -121,13 +121,13 @@ class MultiLocalePracticeTest {
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
 
-        assertEquals("en", c.session?.locale)
-        assertEquals(2, c.session?.items?.size)
+        assertEquals("en", c.practice.session?.locale)
+        assertEquals(2, c.practice.session?.items?.size)
         // 会话里的题面已经是英文，判题会用英文选项，不是中文
-        assertTrue(c.session!!.items.all { it.question.promptMarkdown.startsWith("Prompt") })
+        assertTrue(c.practice.session!!.items.all { it.question.promptMarkdown.startsWith("Prompt") })
 
-        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
-        c.submit()
+        c.practice.session!!.current!!.question.correctOptionIds.forEach { c.practice.toggleOption(it) }
+        c.practice.submit()
         testScheduler.advanceUntilIdle()
 
         assertEquals("en", c.history.last().locale)
@@ -145,8 +145,8 @@ class MultiLocalePracticeTest {
         c.setup.selectLocale("en")
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
-        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
-        c.submit()
+        c.practice.session!!.current!!.question.correctOptionIds.forEach { c.practice.toggleOption(it) }
+        c.practice.submit()
         testScheduler.advanceUntilIdle()
 
         // 英文里答过一道题，不该让中文的「未练习」少一题
@@ -171,8 +171,8 @@ class MultiLocalePracticeTest {
         // 中文练一题
         c.startPractice(c.banks.single(), questionCount = 1)
         testScheduler.advanceUntilIdle()
-        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
-        c.submit()
+        c.practice.session!!.current!!.question.correctOptionIds.forEach { c.practice.toggleOption(it) }
+        c.practice.submit()
         testScheduler.advanceUntilIdle()
         c.finish()
         testScheduler.advanceUntilIdle()
@@ -182,8 +182,8 @@ class MultiLocalePracticeTest {
         c.setup.selectLocale("en")
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
-        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
-        c.submit()
+        c.practice.session!!.current!!.question.correctOptionIds.forEach { c.practice.toggleOption(it) }
+        c.practice.submit()
         testScheduler.advanceUntilIdle()
 
         assertEquals(listOf("en", "zh-Hans"), c.historyView.locales)
@@ -214,17 +214,17 @@ class MultiLocalePracticeTest {
         testScheduler.advanceUntilIdle()
 
         // 会话里每道题都带着自己的语言：有译文的是 en，缺译文退回原文的是 zh-Hans
-        val byLocale = c.session!!.items.groupBy { it.question.locale }
+        val byLocale = c.practice.session!!.items.groupBy { it.question.locale }
         assertEquals(2, byLocale["en"]?.size, "两道有译文的题应标成 en")
         val original = assertNotNull(byLocale["zh-Hans"]).single()
         assertEquals("q2", original.question.questionId)
         assertTrue(original.question.promptMarkdown.startsWith("题干"), "退回的是原文，不是凭空造的译文")
 
         // 当前题是否显示原文，与它自己的语言一致 —— 界面靠这个标记决定要不要挂「原文」徽章
-        val current = assertNotNull(c.currentQuestion)
+        val current = assertNotNull(c.practice.currentQuestion)
         assertEquals(
             current.locale == "zh-Hans",
-            c.currentQuestionShowsOriginal,
+            c.practice.currentQuestionShowsOriginal,
             "「原文」徽章必须跟着当前题实际用的语言走",
         )
     }
@@ -258,7 +258,7 @@ class MultiLocalePracticeTest {
 
         assertEquals(0, c.setup.candidateCount)
         assertEquals(1, c.setup.untranslated)
-        assertNull(c.session)
+        assertNull(c.practice.session)
 
         c.startPlannedPractice()
 
@@ -267,6 +267,6 @@ class MultiLocalePracticeTest {
         val banner = assertNotNull(c.banner)
         assertTrue(banner.isError)
         assertTrue(banner.text.contains("译文"), "实际横幅：${banner.text}")
-        assertNull(c.session)
+        assertNull(c.practice.session)
     }
 }

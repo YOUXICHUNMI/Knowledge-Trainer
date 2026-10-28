@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2476 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476） |
+| `AppController.kt` | 2247 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，620 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，621 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -34,7 +34,7 @@ presentation/
   review/ReviewController.kt        ✅ 已拆
   batch/BatchController.kt          ✅ 已拆
   importing/ImportController.kt    ✅ 已拆
-  practice/PracticeController.kt
+  practice/PracticeController.kt  ✅ 已拆
   graph/GraphController.kt
   backup/BackupController.kt
 ```
@@ -71,7 +71,7 @@ presentation/
 | 6 | 历史复核 | ~199 | `ReviewScreens` | ✅ 已完成 |
 | 7 | 批量队列 | ~211 | `AiScreen` | ✅ 已完成 |
 | 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | ✅ 已完成 |
-| 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | 待做 |
+| 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | ✅ 已完成 |
 | 10 | 个人知识图谱 | ~429 | `GraphScreen` | 待做 |
 | 11 | 备份与迁移（.qbk） | ~437 | `BackupScreen` | 待做 |
 
@@ -278,3 +278,32 @@ presentation/
   不许建副本，第二次仍要把预览留在页面上 —— 清空输入框是为了防止再点一次，
   但连预览一起丢掉，用户就只剩一句错误横幅，看不出这次导进去了什么。
 - 文件从 2530 行降到 2476 行；619 → 620 用例全绿，行为不变。
+
+## 已完成的第九刀（练习）
+
+- 新增 `presentation/practice/PracticeController.kt`（415 行）：当前会话、待继续的会话、
+  输入中的答案、判题反馈、总结、草稿存盘，以及"会话文件 + 历史"的合并恢复。
+- 它与前八刀不同的地方是**状态会被并发改写两次**：作答在协程里跑，用户的手指同时还在改
+  草稿（选项、文本、片段顺序），而草稿又要合并存盘。`draftJob` 的取消防抖、提交前先取消草稿、
+  换题时清空输入，这三件事必须写在一起 —— 否则"提交后草稿又把旧答案写回去"这类问题
+  会随机出现且事后无法复现。埋进三千行里，没人能一眼确认它没写反。
+- **会话恢复的合并规则跟着搬了。** 会话文件只存题目与游标，已答数量从历史合并；
+  最后一题交过但没点"查看总结"的会话，实际已经做完，要清掉而不是永远挂着。
+  这条规则以前夹在 `loadAll` 里，和题库、扩展、图谱、历史的读取排在一起，
+  看不出它其实只属于"练习"。
+- 三条边界：
+  - **不导航。** 作答页 / 总结页 / 首页仍由组合根决定；`next()` 与 `finish()` 返回
+    "还有没有下一题 / 有没有会话"，去哪儿由调用点说。`next` / `finish` 这两个名字
+    在组合根和子控制器上同时存在，是这一刀唯一容易接错的地方。
+  - **不写别人的数据。** 会话文件与作答记录是它自己的；历史、统计、日历经
+    `onAttemptRecorded` / `onSessionClosed` 交回组合根。
+  - **不判"硬依赖是否过期"。** 那要看图谱关系与题库修订号，组合根算完通过
+    `reportBlockedDependencies(count)` 递给它 —— 与历史页 `update(history)` 同一套做法：
+    派生显示状态归子控制器，"什么时候该重算"归组合根。
+- 组合根留下：抽题（setup）、错题聚合（historyView）、收藏、导航、`checkHardDependencies`。
+- 调用方 55 行：`PracticeScreen` 25、`ScreenshotTest` 21（另加改名）、`MultiLocalePracticeTest` 17、
+  `AppControllerTest` 43 处改名 + 1 个新用例、`AiFlowTest` 7、`HomeScreen`/`SummaryScreen` 各 1。
+- 新增用例 `aSessionWithNothingLeftToAnswerIsClearedInsteadOfOfferedAsResumable`：
+  最后一题答完但没点总结就退出，下次启动**不该**出现"继续练习"（点进去只会看到一道空题），
+  而答过的记录仍在历史里。这条钉的正是搬过来的那段收尾规则。
+- 文件从 2476 行降到 2247 行；620 → 621 用例全绿，行为不变。

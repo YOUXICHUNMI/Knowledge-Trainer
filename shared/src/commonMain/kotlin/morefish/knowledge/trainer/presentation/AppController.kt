@@ -51,7 +51,6 @@ import morefish.knowledge.trainer.application.usecase.RunBatchUseCase
 import morefish.knowledge.trainer.application.usecase.SessionLifecycle
 import morefish.knowledge.trainer.application.usecase.StartPracticeSessionUseCase
 import morefish.knowledge.trainer.application.usecase.SubmitAnswerUseCase
-import morefish.knowledge.trainer.application.usecase.SubmitOutcome
 import morefish.knowledge.trainer.domain.backup.BackupCryptoIds
 import morefish.knowledge.trainer.domain.backup.BackupPreview
 import morefish.knowledge.trainer.domain.backup.BackupProblem
@@ -63,8 +62,6 @@ import morefish.knowledge.trainer.domain.extension.extensionOwnerOf
 import morefish.knowledge.trainer.domain.extension.mergedWith
 import morefish.knowledge.trainer.domain.extension.stateIn
 import morefish.knowledge.trainer.domain.grading.builtInGradingRegistry
-import morefish.knowledge.trainer.domain.i18n.LocaleTag
-import morefish.knowledge.trainer.domain.i18n.localeLabel
 import morefish.knowledge.trainer.domain.graph.DependencyKind
 import morefish.knowledge.trainer.domain.graph.GraphEdge
 import morefish.knowledge.trainer.domain.graph.GraphEdgeView
@@ -77,18 +74,14 @@ import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.graph.resolveGraph
 import morefish.knowledge.trainer.domain.graph.snapshotOf
 import morefish.knowledge.trainer.domain.graph.validate
-import morefish.knowledge.trainer.domain.model.AnswerInput
 import morefish.knowledge.trainer.domain.model.AttemptRecord
 import morefish.knowledge.trainer.domain.model.Ids
 import morefish.knowledge.trainer.domain.model.Note
 import morefish.knowledge.trainer.domain.model.NoteScope
-import morefish.knowledge.trainer.domain.model.PracticeDraft
 import morefish.knowledge.trainer.domain.model.PracticeSession
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
-import morefish.knowledge.trainer.domain.model.QuestionType
 import morefish.knowledge.trainer.domain.model.Severity
-import morefish.knowledge.trainer.domain.model.SessionSummary
 import morefish.knowledge.trainer.domain.model.ValidationIssue
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.validate
@@ -107,6 +100,8 @@ import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
 import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.importing.ImportController
 import morefish.knowledge.trainer.presentation.importing.ImportVerdict
+import morefish.knowledge.trainer.presentation.practice.PracticeController
+import morefish.knowledge.trainer.presentation.practice.PracticeResume
 import morefish.knowledge.trainer.presentation.review.ReviewController
 import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
 import morefish.knowledge.trainer.presentation.setup.SetupStart
@@ -413,14 +408,14 @@ class AppController(
      * 提交反馈与当前题目之间隔着一次"下一题"，直接拿来开会把上一题的答案发出去。
      */
     private fun aiTargetOf(): CurrentQuestion? {
-        val active = session ?: return null
+        val active = practice.session ?: return null
         val question = active.current?.question ?: return null
         return CurrentQuestion(
             bankId = active.bankId,
             question = question,
             sessionLocale = active.locale,
             bank = banks.firstOrNull { it.bankId == active.bankId },
-            attempt = feedback?.attempt?.takeIf { it.questionId == question.questionId },
+            attempt = practice.feedback?.attempt?.takeIf { it.questionId == question.questionId },
         )
     }
 
@@ -435,37 +430,6 @@ class AppController(
 
     var busy by mutableStateOf(false)
         private set
-
-    // ---- 练习状态 ----
-    var session by mutableStateOf<PracticeSession?>(null)
-        private set
-
-    /** 上次未结束的练习。首页据此显示"继续练习"，不自动跳回作答页。 */
-    var resumable by mutableStateOf<PracticeSession?>(null)
-        private set
-
-    var selectedOptionIds by mutableStateOf<Set<String>>(emptySet())
-        private set
-    var textAnswer by mutableStateOf("")
-        private set
-    /** 重组题：已排好的片段次序（optionId），提交时转成 AnswerInput.Ordering。 */
-    var orderedOptionIds by mutableStateOf<List<String>>(emptyList())
-        private set
-    var feedback by mutableStateOf<SubmitOutcome?>(null)
-        private set
-    var summary by mutableStateOf<SessionSummary?>(null)
-        private set
-
-    /**
-     * 当前这道题是否打开过工具箱（计算器 / 单位换算）。
-     * 它会被写进历史：用了辅助工具不是作弊，但记录必须是真的。
-     */
-    var usedToolsForCurrentQuestion by mutableStateOf(false)
-        private set
-
-    private var questionStartedAt: Long = 0L
-    private var draftJob: Job? = null
-
 
     // ---- 笔记 ----
     var notes by mutableStateOf<List<Note>>(emptyList())
@@ -493,8 +457,6 @@ class AppController(
     fun noteCountFor(bankId: String): Int = notes.countForBank(bankId)
 
     fun notesForBank(bankId: String): List<Note> = notes.filter { it.bankId == bankId }
-
-    val currentQuestion: Question? get() = session?.current?.question
 
     val storageWarning: String? get() = if (deps.persistentStorage) null else "当前平台为内存存储，重启后题库、进度与历史会丢失"
 
@@ -688,24 +650,8 @@ class AppController(
         // 图谱只是一份引用清单，读它很便宜；练习页要知道"本题的硬依赖还在不在"
         userGraph = deps.graphRepository.load()
         graph = userGraph.mergedWith(activeExtensions)
-        // 会话文件只存题目与游标；已答数量从历史合并，避免两处各存一份而失配。
-        val active = lifecycle.active()
-        resumable = if (active == null) {
-            null
-        } else {
-            val merged = active.copy(
-                attempts = history
-                    .filter { it.sessionId == active.sessionId }
-                    .sortedBy { it.submittedAtMillis },
-            )
-            if (merged.firstUnansweredIndex >= merged.items.size) {
-                // 最后一题已提交但没点"查看总结"：会话实际已做完，清掉而不是永远挂着。
-                lifecycle.discard(merged)
-                null
-            } else {
-                merged
-            }
-        }
+        // 会话文件只存题目与游标；已答数量从上面这份历史合并，避免两处各存一份而失配。
+        practice.reconcileResumable(history)
         // 日历与错题本按全量历史重算（不受历史页筛选影响）
         historyView.update(history)
         refreshAi()
@@ -751,32 +697,14 @@ class AppController(
      * 保存游标与草稿，首页出现"继续练习"入口。真正丢弃必须显式点"放弃"。
      */
     fun goHome() {
-        val active = session
-        if (active != null && active.isResumable && active.current != null) {
-            val paused = active.copy(draft = currentDraft()).paused(deps.clock.nowMillis())
-            session = null
-            resumable = paused
-            scope.launch { deps.sessionRepository.save(paused) }
-        } else {
-            session = null
-        }
-        feedback = null
-        selectedOptionIds = emptySet()
-        textAnswer = ""
+        practice.leave()
         screen = Screen.HOME
     }
 
     fun pauseAndExit() {
-        val active = session ?: return
-        val paused = active.copy(draft = currentDraft()).paused(deps.clock.nowMillis())
-        session = null
-        resumable = paused
-        feedback = null
-        selectedOptionIds = emptySet()
-        textAnswer = ""
+        if (!practice.pauseAndExit()) return
         banner = Banner("已暂停。回到首页可以接着做，进度与草稿都已保存。", isError = false)
         screen = Screen.HOME
-        scope.launch { deps.sessionRepository.save(paused) }
     }
 
     fun openImport(sample: String) {
@@ -849,7 +777,7 @@ class AppController(
 
     /** 练习页入口：同一题已有笔记就去编辑那一条，没有才新建。 */
     fun openNoteForCurrentQuestion() {
-        val active = session ?: return
+        val active = practice.session ?: return
         val question = active.current?.question ?: return
         val existing = notes.forQuestion(active.bankId, question.questionId)
         if (existing != null) openNoteEditor(existing.noteId) else {
@@ -1541,15 +1469,6 @@ class AppController(
         return GraphCard(bankTitle = bankTitle(ref.bankId), promptMarkdown = "", contentRevision = null)
     }
 
-    /**
-     * 当前这道题有几条判题硬依赖用不了。
-     *
-     * 只统计"以本题为起点、目标确实缺失或需复核"的硬依赖：
-     * 导航关系缺了不影响做题，不在这里制造焦虑。
-     */
-    var blockedHardDependencies by mutableStateOf(0)
-        private set
-
     private var graphSearchJob: Job? = null
 
     /** 关系列表：题目筛选 → 关系筛选 → 只看问题，三个条件可叠加。 */
@@ -1819,7 +1738,7 @@ class AppController(
     }
 
     private fun currentSessionRef(): QuestionRef? {
-        val active = session ?: return null
+        val active = practice.session ?: return null
         val question = active.current?.question ?: return null
         return QuestionRef(active.bankId, question.questionId)
     }
@@ -1847,6 +1766,8 @@ class AppController(
      * 练习时检查本题的判题硬依赖。
      *
      * 只有"本题为起点 + 硬依赖"才需要看；没有这类关系就直接归零，不碰磁盘。
+     * 算出来的数字交给练习控制器显示 —— 只有组合根同时看得到图谱关系与题库修订号，
+     * 而"换题就归零"是练习页的时间规则。
      */
     private fun checkHardDependencies() {
         val ref = currentSessionRef()
@@ -1858,17 +1779,19 @@ class AppController(
         }.orEmpty()
 
         if (targets.isEmpty()) {
-            blockedHardDependencies = 0
+            practice.reportBlockedDependencies(0)
             return
         }
 
         scope.launch {
             val located = deps.bankRepository.locate(targets)
-            blockedHardDependencies = targets.count { target ->
-                val fact = located[target] ?: return@count true
-                val snapshot = graph.snapshotOf(target)
-                snapshot != null && snapshot.contentRevision != fact.contentRevision
-            }
+            practice.reportBlockedDependencies(
+                targets.count { target ->
+                    val fact = located[target] ?: return@count true
+                    val snapshot = graph.snapshotOf(target)
+                    snapshot != null && snapshot.contentRevision != fact.contentRevision
+                },
+            )
         }
     }
 
@@ -1889,7 +1812,7 @@ class AppController(
 
     fun openToolbox(from: Screen = screen) {
         if (screen != Screen.TOOLBOX) toolboxReturn = if (from == Screen.PRACTICE) Screen.PRACTICE else from
-        if (from == Screen.PRACTICE) usedToolsForCurrentQuestion = true
+        if (from == Screen.PRACTICE) practice.markToolUsed()
         screen = Screen.TOOLBOX
     }
 
@@ -2160,6 +2083,27 @@ class AppController(
 
     // ---- 练习 ----
 
+    /**
+     * 作答过程：会话、草稿、判题反馈、总结。
+     *
+     * 组合根只留导航（作答页 / 总结页 / 首页），以及三件只有它才知道的事：
+     * 抽题（setup）、错题聚合（historyView）、判题硬依赖是否过期（graph）。
+     */
+    val practice = PracticeController(
+        submitAnswer = SubmitAnswerUseCase(
+            attempts = deps.attemptRepository,
+            grading = builtInGradingRegistry(),
+            clock = deps.clock,
+        ),
+        lifecycle = SessionLifecycle(deps.sessionRepository, deps.attemptRepository, deps.clock),
+        clock = deps.clock,
+        scope = scope,
+        banks = { banks },
+        onAttemptRecorded = { refreshHistoryOnly() },
+        onSessionClosed = { refresh() },
+        onNotice = { text, isError -> banner = Banner(text, isError) },
+    )
+
     /** 题库卡片上的快捷入口：全部范围、固定题量。抽题规则见 [PracticeSetupController.quickSession]。 */
     fun startPractice(bank: QuestionBank, questionCount: Int? = null) {
         val created = setup.quickSession(bank, questionCount)
@@ -2192,214 +2136,71 @@ class AppController(
         )
     }
 
+    /** 接住一个刚建好的会话：进作答页，再看本题的判题硬依赖还在不在。 */
     private fun applySession(created: PracticeSession) {
-        if (created.items.isEmpty()) {
+        if (!practice.begin(created)) {
             banner = Banner("这个题库没有可练习的题目（全部未通过结构校验）", isError = true)
             return
         }
-        session = created
-        resumable = null
-        selectedOptionIds = emptySet()
-        textAnswer = ""
-        orderedOptionIds = emptyList()
-        usedToolsForCurrentQuestion = false
-        blockedHardDependencies = 0
-        feedback = null
-        summary = null
-        questionStartedAt = deps.clock.nowMillis()
         screen = Screen.PRACTICE
-        scope.launch { lifecycle.saveProgress(created) }
         checkHardDependencies()
     }
 
-    fun toggleOption(optionId: String) {
-        if (feedback != null) return
-        val type = currentQuestion?.type ?: return
-        selectedOptionIds = when (type) {
-            QuestionType.SINGLE_CHOICE, QuestionType.TRUE_FALSE ->
-                if (selectedOptionIds.contains(optionId)) emptySet() else setOf(optionId)
-
-            QuestionType.MULTIPLE_CHOICE ->
-                if (selectedOptionIds.contains(optionId)) selectedOptionIds - optionId
-                else selectedOptionIds + optionId
-
-            QuestionType.SHORT_ANSWER, QuestionType.ORDERING -> selectedOptionIds
-        }
-        scheduleProgressSave()
-    }
-
-    /** 重组题：把片段追加到答案序列末尾（一个片段只能用一次）。 */
-    fun appendFragment(optionId: String) {
-        if (feedback != null) return
-        if (optionId in orderedOptionIds) return
-        orderedOptionIds = orderedOptionIds + optionId
-        scheduleProgressSave()
-    }
-
-    /** 重组题：把片段从答案序列的指定位置移除。 */
-    fun removeFragmentAt(index: Int) {
-        if (feedback != null) return
-        if (index !in orderedOptionIds.indices) return
-        orderedOptionIds = orderedOptionIds.toMutableList().apply { removeAt(index) }
-        scheduleProgressSave()
-    }
-
-    fun updateTextAnswer(value: String) {
-        if (feedback != null) return
-        textAnswer = value
-        // 输入框每次按键都落盘代价太高，延迟合并；提交/暂停时另有立即保存。
-        scheduleProgressSave(delayMillis = 350)
-    }
-
-    fun submit() {
-        val current = session ?: return
-        val item = current.current ?: return
-        if (feedback != null) return
-
-        val answer: AnswerInput = when (item.question.type) {
-            QuestionType.SHORT_ANSWER -> AnswerInput.Text(textAnswer)
-            QuestionType.ORDERING -> AnswerInput.Ordering(orderedOptionIds)
-            else -> AnswerInput.Choices(selectedOptionIds)
-        }
-        if (answer.isEmpty) {
-            banner = Banner("请先作答再提交", isError = true)
+    /** 下一题；后面没有题了就去收尾。 */
+    fun next() {
+        if (practice.next()) {
+            checkHardDependencies()
             return
         }
-
-        scope.launch {
-            draftJob?.cancel()
-            val outcome = submitAnswer.submit(
-                session = current,
-                item = item,
-                answer = answer,
-                elapsedMillis = deps.clock.nowMillis() - questionStartedAt,
-                usedTools = usedToolsForCurrentQuestion,
-            )
-            session = outcome.session
-            feedback = outcome
-            lifecycle.saveProgress(outcome.session)
-            refreshHistoryOnly()
-        }
-    }
-
-    fun abandon() {
-        val current = session ?: return
-        val item = current.current ?: return
-        if (feedback != null) return
-        scope.launch {
-            draftJob?.cancel()
-            val outcome = submitAnswer.abandon(
-                session = current,
-                item = item,
-                elapsedMillis = deps.clock.nowMillis() - questionStartedAt,
-                usedTools = usedToolsForCurrentQuestion,
-            )
-            session = outcome.session
-            feedback = outcome
-            lifecycle.saveProgress(outcome.session)
-            refreshHistoryOnly()
-        }
-    }
-
-    fun next() {
-        val current = session ?: return
-        feedback = null
-        selectedOptionIds = emptySet()
-        textAnswer = ""
-        orderedOptionIds = emptyList()
-        usedToolsForCurrentQuestion = false
-        blockedHardDependencies = 0
-        val advanced = current.advance().withDraft(PracticeDraft.Empty, deps.clock.nowMillis())
-        session = advanced
-        if (advanced.current == null) {
-            finish()
-        } else {
-            questionStartedAt = deps.clock.nowMillis()
-            scope.launch { lifecycle.saveProgress(advanced) }
-            checkHardDependencies()
-        }
+        finish()
     }
 
     fun finish() {
-        val current = session ?: return
-        summary = current.summary()
-        val done = current.completed()
-        session = done
-        resumable = null
-        screen = Screen.SUMMARY
-        scope.launch {
-            draftJob?.cancel()
-            lifecycle.complete(done)
-            refresh()
-        }
+        if (practice.finish()) screen = Screen.SUMMARY
     }
 
     fun toggleFavorite(question: Question) {
-        val bankId = session?.bankId ?: setup.bankId ?: return
+        val bankId = practice.session?.bankId ?: setup.bankId ?: return
         val key = QuestionKey(bankId, question.questionId)
         scope.launch { favorites = deps.favoriteRepository.toggle(key) }
     }
 
     fun isFavorite(questionId: String): Boolean {
-        val bankId = session?.bankId ?: return false
+        val bankId = practice.session?.bankId ?: return false
         return QuestionKey(bankId, questionId) in favorites
     }
 
     // ---- 恢复与丢弃 ----
 
     fun resumeSession() {
-        val stored = resumable ?: return
+        val stored = practice.resumable ?: return
         scope.launch {
-            val restored = lifecycle.resume(stored)
-            resumable = null
-            session = restored
-            selectedOptionIds = restored.draft.selectedOptionIds
-            textAnswer = restored.draft.textAnswer
-            orderedOptionIds = restored.draft.orderedOptionIds
-            usedToolsForCurrentQuestion = false
-            blockedHardDependencies = 0
-            feedback = null
-            summary = null
-            questionStartedAt = deps.clock.nowMillis()
-            screen = Screen.PRACTICE
-            if (restored.current == null) {
-                finish()
-            } else {
-                checkHardDependencies()
-            }
-            if (restored.current != null && restored.cursor != stored.cursor) {
-                banner = Banner(
-                    "上次提交的题目已跳过，从第 ${restored.cursor + 1} 题继续（已答 ${restored.answeredCount}）",
-                    isError = false,
-                )
+            when (val outcome = practice.resume()) {
+                null -> Unit
+                // 会话文件里最后一题已经交过、只是没点"查看总结"：直接去总结页
+                PracticeResume.Finished -> finish()
+                is PracticeResume.Ready -> {
+                    screen = Screen.PRACTICE
+                    checkHardDependencies()
+                    if (outcome.session.cursor != stored.cursor) {
+                        banner = Banner(
+                            "上次提交的题目已跳过，从第 ${outcome.session.cursor + 1} 题继续" +
+                                "（已答 ${outcome.session.answeredCount}）",
+                            isError = false,
+                        )
+                    }
+                }
             }
         }
     }
 
     fun discardResumable() {
-        val stored = resumable ?: return
-        resumable = null
-        scope.launch {
-            lifecycle.discard(stored)
-            banner = Banner(
-                "已放弃该练习。已提交的 ${stored.answeredCount} 条记录仍保留在历史中（历史只追加，不删除）。",
-                isError = false,
-            )
-        }
-    }
-
-    private fun currentDraft(): PracticeDraft =
-        PracticeDraft(selectedOptionIds, textAnswer, orderedOptionIds)
-
-    private fun scheduleProgressSave(delayMillis: Long = 0L) {
-        val current = session ?: return
-        val snapshot = current.withDraft(currentDraft(), deps.clock.nowMillis())
-        session = snapshot
-        draftJob?.cancel()
-        draftJob = scope.launch {
-            if (delayMillis > 0) delay(delayMillis)
-            lifecycle.saveProgress(snapshot)
-        }
+        val stored = practice.resumable ?: return
+        practice.discard()
+        banner = Banner(
+            "已放弃该练习。已提交的 ${stored.answeredCount} 条记录仍保留在历史中（历史只追加，不删除）。",
+            isError = false,
+        )
     }
 
     private fun refreshHistoryOnly() {
@@ -2428,36 +2229,6 @@ class AppController(
             ?: raw
     }
 
-    // ---- 当前这场练习的语言 ----
-
-    val currentBank: QuestionBank?
-        get() = session?.bankId?.let { id -> banks.firstOrNull { it.bankId == id } }
-
-    /** 练习页顶部的语言提示；单语言题库不显示（那是噪音）。 */
-    val sessionLocaleLabel: String?
-        get() {
-            val bank = currentBank ?: return null
-            if (bank.availableLocales.size <= 1) return null
-            val locale = session?.locale.orEmpty()
-            return if (locale.isBlank()) null else localeLabel(locale)
-        }
-
-    /**
-     * 当前这道题显示的是原文吗（本场选了某语言，但这题没有该语言译文，退回了原文）。
-     * 是就必须在题干上标出来 —— 否则用户会以为自己看到的是译文。
-     */
-    val currentQuestionShowsOriginal: Boolean
-        get() {
-            val bank = currentBank ?: return false
-            val question = currentQuestion ?: return false
-            val locale = session?.locale.orEmpty()
-            if (locale.isBlank()) return false
-            val want = LocaleTag.parse(locale)?.value ?: locale
-            val source = LocaleTag.parse(bank.sourceLocale)?.value ?: bank.sourceLocale
-            if (want == source) return false
-            val actual = question.locale?.let { LocaleTag.parse(it)?.value ?: it } ?: source
-            return actual == source
-        }
 
     /** 练习/回顾界面按 bankId + assetId 取媒体字节；取不到时 UI 显示占位而不是报错。 */
     suspend fun loadMedia(bankId: String, assetId: String): ByteArray? =
@@ -2465,7 +2236,7 @@ class AppController(
 
     fun bankTitle(bankId: String): String =
         banks.firstOrNull { it.bankId == bankId }?.title
-            ?: resumable?.takeIf { it.bankId == bankId }?.bankTitle?.takeIf { it.isNotBlank() }
+            ?: practice.resumable?.takeIf { it.bankId == bankId }?.bankTitle?.takeIf { it.isNotBlank() }
             ?: "（题库缺失）"
 }
 

@@ -74,7 +74,7 @@ fun HomeScreen(controller: AppController) {
     val correct = attempts.count { it.verdict == Verdict.CORRECT }
     val accuracy = if (graded == 0) null else correct.toFloat() / graded
     val questionTotal = controller.banks.sumOf { it.questionCount }
-    val paused = controller.resumable?.takeIf { it.current != null }
+    val paused = controller.practice.resumable?.takeIf { it.current != null }
 
     ScreenScaffold(
         title = "Knowledge Trainer",

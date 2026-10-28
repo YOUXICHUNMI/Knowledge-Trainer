@@ -93,14 +93,14 @@ class ScreenshotTest {
         }
         shot("04-practice-feedback") {
             // 故意选错，看错误态的配色与差异标注
-            val first = controller.session?.current ?: error("没有会话")
+            val first = controller.practice.session?.current ?: error("没有会话")
             val wrongOption = first.orderedOptions().firstOrNull { it.optionId !in first.question.correctOptionIds }
             if (wrongOption != null) {
-                controller.toggleOption(wrongOption.optionId)
+                controller.practice.toggleOption(wrongOption.optionId)
             } else {
-                controller.updateTextAnswer("一个明显不对的答案")
+                controller.practice.updateTextAnswer("一个明显不对的答案")
             }
-            controller.submit()
+            controller.practice.submit()
             AppContent(controller)
         }
         shot("05-summary") {
@@ -274,23 +274,23 @@ class ScreenshotTest {
             AppContent(controller)
         }
         shot("14-richtext-feedback") {
-            val first = controller.session?.current ?: error("没有会话")
+            val first = controller.practice.session?.current ?: error("没有会话")
             val wrong = first.orderedOptions().firstOrNull { it.optionId !in first.question.correctOptionIds }
-            if (wrong != null) controller.toggleOption(wrong.optionId) else controller.updateTextAnswer("错的")
-            controller.submit()
+            if (wrong != null) controller.practice.toggleOption(wrong.optionId) else controller.practice.updateTextAnswer("错的")
+            controller.practice.submit()
             AppContent(controller)
         }
         shot("15-richtext-block-math") {
             // 抽题顺序会打乱，按题号走到简答题再截图
             var guard = 0
-            while (controller.session?.current?.question?.questionId != "r3" && guard++ < 8) {
+            while (controller.practice.session?.current?.question?.questionId != "r3" && guard++ < 8) {
                 controller.next()
             }
             AppContent(controller)
         }
         shot("16-richtext-list") {
-            controller.updateTextAnswer("c = 1 / sqrt(mu0 eps0)")
-            controller.submit()
+            controller.practice.updateTextAnswer("c = 1 / sqrt(mu0 eps0)")
+            controller.practice.submit()
             AppContent(controller)
         }
     }
@@ -548,7 +548,7 @@ class ScreenshotTest {
 
         // 练习页的「关联」入口：给当前这道题挂两条关系后再回来看
         controller.startPractice(imported, questionCount = 1)
-        val current = controller.session?.current?.question
+        val current = controller.practice.session?.current?.question
         if (current != null) {
             val currentRef = QuestionRef(imported.bankId, current.questionId)
             runBlocking {
@@ -693,9 +693,9 @@ class ScreenshotTest {
         controller.startPlannedPractice()
         // 走到第一道"本场选了英文、但这题没译文"的题，把「原文」徽章拍进去
         var guard = 0
-        while (!controller.currentQuestionShowsOriginal && guard++ < 12) controller.next()
+        while (!controller.practice.currentQuestionShowsOriginal && guard++ < 12) controller.next()
         shot("31-locale-fallback") { AppContent(controller) }
-        println("练习语言=${controller.session?.locale} 原文标记=${controller.currentQuestionShowsOriginal}")
+        println("练习语言=${controller.practice.session?.locale} 原文标记=${controller.practice.currentQuestionShowsOriginal}")
     }
 
     /**
@@ -749,8 +749,8 @@ class ScreenshotTest {
             "sk-screenshot-demo",
         )
         controller.startPractice(bank, questionCount = 1)
-        controller.session?.current?.question?.correctOptionIds?.forEach { controller.toggleOption(it) }
-        controller.submit()
+        controller.practice.session?.current?.question?.correctOptionIds?.forEach { controller.practice.toggleOption(it) }
+        controller.practice.submit()
         controller.ai.generate()
         shot("33-ai-explanation", height = 1320) { AppContent(controller) }
         println("AI 记录数=${controller.ai.records.size} 状态=${controller.ai.currentExplanation?.state}")
@@ -1035,13 +1035,13 @@ class ScreenshotTest {
         name: String,
     ) {
         controller.startPractice(bank, questionCount = bank.questions.size)
-        val session = controller.session ?: error("$name：会话没有建起来")
+        val session = controller.practice.session ?: error("$name：会话没有建起来")
         val index = session.items.indexOfFirst { it.question.questionId == questionId }
         check(index >= 0) { "$name：会话里没有 $questionId" }
         // 翻页必须在 shot 之外：content lambda 会被渲染二十多次，放进去等于连翻二十多次
         repeat(index - session.cursor) { controller.next() }
-        check(controller.session?.current?.question?.questionId == questionId) {
-            "$name：翻到的是 ${controller.session?.current?.question?.questionId}，不是 $questionId"
+        check(controller.practice.session?.current?.question?.questionId == questionId) {
+            "$name：翻到的是 ${controller.practice.session?.current?.question?.questionId}，不是 $questionId"
         }
         shot(name) { AppContent(controller) }
     }

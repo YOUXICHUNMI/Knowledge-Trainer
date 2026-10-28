@@ -37,7 +37,7 @@ import morefish.knowledge.trainer.presentation.ui.formatDuration
 
 @Composable
 fun SummaryScreen(controller: AppController) {
-    val summary = controller.summary
+    val summary = controller.practice.summary
 
     ScreenScaffold(
         title = "练习总结",

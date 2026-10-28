@@ -112,8 +112,8 @@ class AiFlowTest {
         controller.refresh()
         controller.startPractice(controller.banks.single(), questionCount = 1)
         scheduler.advanceUntilIdle()
-        controller.session!!.current!!.question.correctOptionIds.forEach { controller.toggleOption(it) }
-        controller.submit()
+        controller.practice.session!!.current!!.question.correctOptionIds.forEach { controller.practice.toggleOption(it) }
+        controller.practice.submit()
         scheduler.advanceUntilIdle()
         return controller
     }
@@ -132,8 +132,8 @@ class AiFlowTest {
         controller.refresh()
         controller.startPractice(controller.banks.single(), questionCount = 2)
         scheduler.advanceUntilIdle()
-        controller.session!!.current!!.question.correctOptionIds.forEach { controller.toggleOption(it) }
-        controller.submit()
+        controller.practice.session!!.current!!.question.correctOptionIds.forEach { controller.practice.toggleOption(it) }
+        controller.practice.submit()
         scheduler.advanceUntilIdle()
         return controller
     }
