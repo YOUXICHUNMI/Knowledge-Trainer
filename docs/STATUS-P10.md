@@ -116,7 +116,7 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **663 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15 + 深色主题 16） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **664 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15 + 深色主题 17） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
 | 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 74 张，含真实 B 类题库附图与 20 张深色 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
@@ -158,7 +158,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，663 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，664 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -519,7 +519,7 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 提示只在有物理键盘的设备上显示（`Platform.hasPhysicalKeyboard`，Android / iOS 为 false）：
 手机上写「按 A 选择」，只会让人到处找按键。
 
-663 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
+664 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
 `:androidApp:compileDebugKotlin` 均通过。
 
 ### 18. 深色主题：把「只有浅色」这条限制消掉
@@ -534,7 +534,7 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | 硬编码清零 | Hero 的浅紫、题库头像四组渐变、日历四档热度、顶部晕染、进度条渐变全部收进令牌；`theme/` 之外已搜不到 `Color(0x` |
 | 持久化 | 新增 `application/port/Preferences.kt` + `JsonPreferencesRepository`（`prefs-v1.json`）。放在数据目录里，于是天然进 `.qbk` 备份 |
 | 切换 | `AppContent` 用 `key(dark)` 包住整棵树 |
-| 用例 | 647 → **663**（对比度 4 / 控制器 8 / 接线 1 / 深色截图 2 / 防手滑扫描 1） |
+| 用例 | 647 → **664**（对比度 4 / 控制器 8 / 接线 1 / 深色截图 2 / 深色像素护栏 1 / 防手滑扫描 1） |
 
 三条值得记下来的：
 
@@ -558,6 +558,14 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
    深色下差点看不见：它用分隔线色（`#332E24`）当边，压在自己那块底（`#262218`）上只有 1.26:1。
    把截图放大才确认。改成 `Muted` 当边（浅 5.2 / 深 6.9，与 Material 自己的未选中勾选框一致），
    并把 `muted/panelMuted` 加进对比度清单 —— 这条规则不只管这一个方块。
+
+**这道护栏现在有自动化的一半了**：`DarkSurfaceTest`（每次 `:shared:jvmTest` 都跑）
+把练习、导入、历史三页渲染出来，逐 8×8 小块看"是不是整块都亮"——文字的笔画夹着深底，
+永远过不了这一关，漏掉令牌的白卡片则整块都是亮的。判据的两次修正很值得记：
+按"平均亮度"判定时，大号粗体白字能把均值抬到 0.61，误报；按"块内最小亮度"才对。
+另外"这是不是深色页"不能看左上角像素——顶栏自己就是一块纸面，被改成白之后
+反倒会被当成浅色页跳过；改成读 `Palette.current`。护栏验证过：把深色的 `Panel` 改亮，
+它立刻报"5838 个 8×8 小块整块都是亮的，最亮的一块在 (0,0)"。
 
 深色**逐张看过**的截图（20 张全部拍，看了 18 张）：
 `55-home-dark`、`56-practice-feedback-dark`、`57-home-dark-phone`（420dp 手机宽度，胶囊不挤标题）、
@@ -584,11 +592,12 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 663 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 664 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 | 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
 | 深色有 2 张截图没看 | 20 张深色截图看了 18 张，`63-note-editor-dark` 与 `68-wrong-dark` 没看 |
+| 像素护栏只常驻三页 | `DarkSurfaceTest` 只渲染练习 / 导入 / 历史；全量 74 张截图那条要 `KT_SHOTS=1`，CI 上默认不跑 |
 | 深色下 Hero 主按钮仍是白底 | "纸上一块白"是刻意的层次；代价是它的字色 `HeroActionInk` 必须固定，不跟着主题走 |
 | 浅色的 `Faint` 只有 2.95:1 | 它只用于计数、脚注这类提示级文字，不承担正文；深色下同一项是 4.46:1 |
 | 换主题时整棵树重建 | 滚动位置与局部展开状态会重置（切主题是低频动作，换来的是"一处定义、处处跟随"） |
@@ -604,6 +613,6 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
    所以只能 `jvm`/`android`/`ios` 走 SQLite、`js`/`wasm` 继续文件或内存，端口得先长出查询语义
    （现在 `TextStorage` 只会读整份文本，而 SQLite 的价值恰恰在"只读需要的部分"）。
    真做之前先补一次基线：用 `KT_BENCH=1` 重跑十万题，把开工前的数字写下来。
-4. **给深色加一道自动护栏**：现在 20 张深色截图全靠人工看，漏网的「某块还是浅色的」没人拦。
-   可行做法：把 `shot()` 加一个 `dark` 参数，渲染完成后缩到 1/8 取样，一旦出现成片的近白区域
-   （文字本身是浅色，缩采样后才分得清"字"和"面"）就失败 —— 首页的白色主按钮要单独豁免。
+4. **CI 里也跑一次截图**：`ScreenshotTest` 只在 `KT_SHOTS=1` 时渲染，CI 上没有这一步，
+   所以它的 74 张图与那条像素护栏只在本地生效（`DarkSurfaceTest` 那三页例外，它每次都会跑）。
+   要补的是：加一个只在 push 到 main 时跑的 job，`KT_SHOTS=1` + 上传 `ui-shots/` 作为 artifact。
