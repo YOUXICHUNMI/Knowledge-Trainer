@@ -46,7 +46,6 @@ import morefish.knowledge.trainer.application.usecase.ExtensionOutcome
 import morefish.knowledge.trainer.application.usecase.GenerateExplanationUseCase
 import morefish.knowledge.trainer.application.usecase.ImportBankUseCase
 import morefish.knowledge.trainer.application.usecase.ImportExtensionUseCase
-import morefish.knowledge.trainer.application.usecase.ImportOutcome
 import morefish.knowledge.trainer.application.usecase.PlanPracticeUseCase
 import morefish.knowledge.trainer.application.usecase.RunBatchUseCase
 import morefish.knowledge.trainer.application.usecase.SessionLifecycle
@@ -106,14 +105,14 @@ import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
 import morefish.knowledge.trainer.presentation.batch.BatchController
 import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
 import morefish.knowledge.trainer.presentation.history.HistoryController
+import morefish.knowledge.trainer.presentation.importing.ImportController
+import morefish.knowledge.trainer.presentation.importing.ImportVerdict
 import morefish.knowledge.trainer.presentation.review.ReviewController
 import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
 import morefish.knowledge.trainer.presentation.setup.SetupStart
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxController
 import morefish.knowledge.trainer.infrastructure.ai.OpenAiCompatibleProvider
 import morefish.knowledge.trainer.application.port.ChoiceMapping
-import morefish.knowledge.trainer.application.port.ImportParseResult
-import morefish.knowledge.trainer.application.port.ImportPreview
 import morefish.knowledge.trainer.infrastructure.importing.PackageFormat
 import morefish.knowledge.trainer.infrastructure.importing.PackageProbe
 import morefish.knowledge.trainer.infrastructure.archive.PureDeflateCodec
@@ -284,7 +283,6 @@ class AppController(
     private val deps: AppDependencies,
     private val scope: CoroutineScope,
 ) {
-    private val importBank = ImportBankUseCase(deps.bankRepository, media = deps.mediaStore, clock = deps.clock)
     private val startPractice = StartPracticeSessionUseCase(deps.clock)
     private val planPractice = PlanPracticeUseCase(startPractice)
     private val submitAnswer = SubmitAnswerUseCase(
@@ -437,25 +435,6 @@ class AppController(
 
     var busy by mutableStateOf(false)
         private set
-
-    // ---- 导入状态 ----
-    var importText by mutableStateOf("")
-        private set
-    var importTitle by mutableStateOf("")
-        private set
-    var importPreview by mutableStateOf<ImportPreview?>(null)
-        private set
-    var importError by mutableStateOf<String?>(null)
-        private set
-    var lastImportNotes by mutableStateOf<List<String>>(emptyList())
-        private set
-
-    /** 最近一次通过文件选择器选中的包名，用于在界面上显示"这次导入的是哪个文件"。 */
-    var pickedFileName by mutableStateOf<String?>(null)
-        private set
-
-    val filePickerAvailable: Boolean get() = deps.filePicker.isAvailable
-    val filePickerUnavailableReason: String? get() = deps.filePicker.unavailableReason
 
     // ---- 练习状态 ----
     var session by mutableStateOf<PracticeSession?>(null)
@@ -801,10 +780,8 @@ class AppController(
     }
 
     fun openImport(sample: String) {
-        if (importText.isBlank()) importText = sample
+        importing.open(sample)
         screen = Screen.IMPORT
-        importPreview = null
-        importError = null
     }
 
     /** 打开题库标准说明；returnTo 记录从哪来，返回时回到原处。 */
@@ -1979,42 +1956,26 @@ class AppController(
 
     // ---- 导入 ----
 
-    fun updateImportText(value: String) {
-        importText = value
-        importPreview = null
-        importError = null
-    }
-
-    fun updateImportTitle(value: String) {
-        importTitle = value
-    }
-
-    fun previewImport(mapping: ChoiceMapping = ChoiceMapping.AUTO) {
-        when (val result = importBank.preview(importText, mapping)) {
-            is ImportParseResult.Failed -> {
-                importPreview = null
-                importError = result.message
-            }
-
-            is ImportParseResult.Ok -> {
-                importPreview = result.preview
-                importError = null
-                lastImportNotes = result.preview.notes
-            }
-        }
-    }
+    /**
+     * 粘贴文本与 `.qbank` 包的状态、解析、落库都在它里面。
+     *
+     * 组合根只留入口（[openImport] / [importDroppedFile] / [pickPackageFile]）、
+     * 包类型分发（认包要碰 infrastructure），以及"导入之后"的编排（[announceImport]）。
+     */
+    val importing = ImportController(
+        useCase = ImportBankUseCase(deps.bankRepository, media = deps.mediaStore, clock = deps.clock),
+        picker = deps.filePicker,
+    )
 
     fun confirmImport(mapping: ChoiceMapping = ChoiceMapping.AUTO) {
         scope.launch {
+            // 落库前先记下哪些扩展包是生效的：题库到位会让"等待题库"的包当场生效，
+            // 这件事只有拿前后两份清单比才说得出来
+            val activeBefore = activeExtensionIds()
             busy = true
-            val outcome = importBank.import(
-                raw = importText,
-                mapping = mapping,
-                title = importTitle,
-                sourceLabel = "pasted-json",
-            )
+            val verdict = importing.confirmText(mapping)
             busy = false
-            applyImportOutcome(outcome, resetText = true)
+            announceImport(verdict, activeBefore)
         }
     }
 
@@ -2039,14 +2000,14 @@ class AppController(
      * 因此不做题型映射，也不允许"部分成功"—— 校验器 fail-closed，错一条就整包拒绝。
      */
     fun pickPackageFile() {
-        if (!deps.filePicker.isAvailable) {
-            banner = Banner(deps.filePicker.unavailableReason ?: "当前平台不能选择文件", isError = true)
+        if (!importing.pickerAvailable) {
+            banner = Banner(importing.pickerUnavailableReason ?: "当前平台不能选择文件", isError = true)
             return
         }
         scope.launch {
             busy = true
             val picked = try {
-                deps.filePicker.pickPackage()
+                importing.pick()
             } catch (e: FilePickException) {
                 busy = false
                 banner = Banner(e.message ?: "选择文件失败", isError = true)
@@ -2066,11 +2027,12 @@ class AppController(
     /**
      * 分发：先认包类型，再走各自的严格读取器。
      *
+     * 认包要碰 infrastructure，所以这一段留在组合根；[ImportController] 只管题库本身。
      * 认不出来时把"为什么认不出来"说清楚（不是 ZIP / 没有 manifest / format 未知），
      * 比一句"格式不支持"有用得多。
      */
     private suspend fun importPackageBytes(name: String, bytes: ByteArray) {
-        pickedFileName = name
+        importing.notePickedFile(name)
         when (PackageProbe.formatOf(bytes, PureDeflateCodec)) {
             PackageFormat.QBANK -> importQbankBytes(name, bytes)
             PackageFormat.QBEXT -> importExtensionBytes(name, bytes)
@@ -2120,7 +2082,7 @@ class AppController(
             }
 
             is ExtensionOutcome.Failed -> {
-                importError = outcome.message
+                importing.showError(outcome.message)
                 screen = Screen.IMPORT
                 banner = Banner("扩展包未通过校验，没有写入任何数据：${outcome.message}", isError = true)
             }
@@ -2129,41 +2091,32 @@ class AppController(
 
     /** 文件名 + 包字节 → 校验导入。文件选择器与拖拽两条入口共用。 */
     private suspend fun importQbankBytes(name: String, bytes: ByteArray) {
-        pickedFileName = name
-        if (!importBank.looksLikeQbank(bytes)) {
-            banner = Banner(
-                "「$name」不是 .qbank 包（ZIP 格式）；如果这是文本 JSON，请粘贴到输入框。",
-                isError = true,
-            )
-            return
-        }
+        // 落库前先记下哪些扩展包是生效的，见 [announceImport]
+        val activeBefore = activeExtensionIds()
         busy = true
-        val outcome = importBank.importQbank(
-            bytes = bytes,
-            fallbackTitle = name.substringBeforeLast('.').ifBlank { name },
-            sourceLabel = "qbank:$name",
-        )
+        val verdict = importing.importQbank(name, bytes)
         busy = false
-        applyImportOutcome(outcome, resetText = false)
+        announceImport(verdict, activeBefore)
     }
 
-    /** 文本导入与文件导入共用的结果处理：两条路径的失败语义一致，提示也应一致。 */
-    private fun applyImportOutcome(outcome: ImportOutcome, resetText: Boolean) {
-        when (outcome) {
-            is ImportOutcome.Imported -> {
-                // 题库到位可能让"等待题库"的扩展包开始生效，这件事必须说出来
-                val activeBefore = activeExtensions.map { it.packageId }.toSet()
-                importPreview = outcome.preview
-                if (resetText) {
-                    importText = ""
-                    importTitle = ""
-                }
-                importError = null
+    private fun activeExtensionIds(): Set<String> = activeExtensions.mapTo(mutableSetOf()) { it.packageId }
+
+    /**
+     * 导入之后的去向：说什么话、去哪个页面、要不要整体重读。
+     *
+     * 两个来源（粘贴文本 / `.qbank` 包）走同一段：[ImportController] 保证"过程"的差异
+     * 不外泄，这里保证"之后"完全一致 —— 以前这是两条各自 `when` 的分支，
+     * 改一条另一条就容易落下。
+     */
+    private fun announceImport(verdict: ImportVerdict, activeBefore: Set<String>) {
+        when (verdict) {
+            is ImportVerdict.Imported -> {
                 refresh()
                 goHome()
                 banner = Banner(
                     buildString {
-                        append("已导入《${outcome.bank.title}》，${outcome.bank.questionCount} 题")
+                        append("已导入《${verdict.bank.title}》，${verdict.bank.questionCount} 题")
+                        // 题库到位可能让"等待题库"的扩展包开始生效，这件事必须说出来
                         val activated = activeExtensions.filter { it.packageId !in activeBefore }
                         if (activated.isNotEmpty()) {
                             append("。扩展包 ")
@@ -2175,40 +2128,33 @@ class AppController(
                 )
             }
 
-            is ImportOutcome.Duplicate -> {
-                banner = Banner(
-                    "该题库已经导入过（《${outcome.existing.title}》）。为避免重复，本次未创建副本。",
-                    isError = true,
-                )
-                importPreview = outcome.preview
-            }
+            is ImportVerdict.Duplicate -> banner = Banner(
+                "该题库已经导入过（《${verdict.existing.title}》）。为避免重复，本次未创建副本。",
+                isError = true,
+            )
 
-            is ImportOutcome.IdentityConflict -> {
-                importPreview = outcome.preview
-                // 不覆盖、也不假装成功：说清楚"这是什么"和"该怎么更新"，否则用户只会反复重装
-                banner = Banner(
-                    "《${outcome.existing.title}》已经装过第 ${outcome.existing.contentRevision} 版" +
-                        "（本地 ${outcome.existing.questionCount} 题，这个包 ${outcome.preview.accepted.size} 题）。" +
-                        "同一个题库的更新请用 .qbpatch 补丁导入 —— 那会逐条列出改动，并保留你的练习历史。",
-                    isError = true,
-                )
-            }
+            // 不覆盖、也不假装成功：说清楚"这是什么"和"该怎么更新"，否则用户只会反复重装
+            is ImportVerdict.IdentityConflict -> banner = Banner(
+                "《${verdict.existing.title}》已经装过第 ${verdict.existing.contentRevision} 版" +
+                    "（本地 ${verdict.existing.questionCount} 题，这个包 ${verdict.incomingCount} 题）。" +
+                    "同一个题库的更新请用 .qbpatch 补丁导入 —— 那会逐条列出改动，并保留你的练习历史。",
+                isError = true,
+            )
 
-            is ImportOutcome.NeedsMapping -> {
-                importPreview = outcome.preview
-                banner = Banner("有 ${outcome.preview.ambiguousCount} 道题的题型需要你确认", isError = true)
-            }
+            is ImportVerdict.NeedsMapping -> banner = Banner(
+                "有 ${verdict.ambiguousCount} 道题的题型需要你确认",
+                isError = true,
+            )
 
-            is ImportOutcome.Rejected -> {
-                importPreview = outcome.preview
-                importError = "没有可导入的题目，请查看下方问题列表"
-            }
+            // 行内已经写了"没有可导入的题目"，横幅再说一遍只是重复
+            ImportVerdict.Rejected -> Unit
 
-            is ImportOutcome.Failed -> {
-                importPreview = null
-                importError = outcome.message
-                banner = Banner("导入失败：包未通过校验，没有写入任何数据", isError = true)
-            }
+            is ImportVerdict.Failed -> banner = Banner(
+                "导入失败：包未通过校验，没有写入任何数据",
+                isError = true,
+            )
+
+            is ImportVerdict.Refused -> banner = Banner(verdict.reason, isError = true)
         }
     }
 

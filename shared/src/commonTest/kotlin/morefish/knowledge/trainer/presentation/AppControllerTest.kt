@@ -853,4 +853,32 @@ class AppControllerTest {
         assertTrue(onDisk.snapshots.isEmpty())
     }
 
+    /**
+     * 同一份材料导入两次：不建副本，第二次仍要看得见自己导的是什么。
+     *
+     * 这条钉的是"成功之后清空输入框"与"结论仍说得出来"这对组合。清空输入框是为了防止
+     * 用户再点一次（点了也只会得到一条"已经导入过"），但清空之后如果把预览也一起丢了，
+     * 用户就只剩一句错误横幅，看不出这次到底导进去了什么。
+     */
+    @Test
+    fun importingTheSameTextTwiceCreatesNoCopyAndKeepsThePreview() = runTest {
+        val storage = InMemoryTextStorage()
+        val c = controller(storage, testScheduler)
+        c.refresh()
+
+        c.openImport(SampleBank.json)
+        c.confirmImport(ChoiceMapping.AUTO)
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, c.banks.size)
+        assertEquals("", c.importing.text, "导入成功之后输入框要清空，否则再点一次只会撞重复")
+
+        c.openImport(SampleBank.json)
+        c.confirmImport(ChoiceMapping.AUTO)
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(1, c.banks.size, "重复导入不能悄悄建副本")
+        assertNotNull(c.importing.preview, "第二次也要能看到自己导的是什么")
+        assertTrue(c.banner?.text.orEmpty().contains("已经导入过"))
+    }
+
 }

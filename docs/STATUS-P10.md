@@ -114,7 +114,7 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **619 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 11） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **620 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 12） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
 | 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
@@ -156,7 +156,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，619 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，620 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -303,6 +303,36 @@ ID 是进度、复核、错题本匹配题目的唯一依据，撞了就会让�
 新增用例 `questionsGoneFromTheBankAreSkippedInsteadOfBeingRequested`：排队之后题库被换掉，
 跑起来必须从磁盘重读、找不到就跳过并说明原因，而不是拿内存里那份旧题库去花钱。
 
+### 10. 组合根拆分：第八刀是导入
+
+新增 `presentation/importing/ImportController.kt`（246 行）：粘贴文本与 `.qbank` 包两种材料，
+连同"选文件"这个入口、解析预览、行内错误、最近处理的文件名一起搬走。
+
+拆它的理由不是"字段多"，而是**两条输入路径共用一套结论**：文本走宽松导入（允许部分题目
+有问题、其余照常导入、要题型映射），包走严格校验（错一条整包拒绝、不做映射）。过程完全不同，
+但"导入之后"必须一致 —— 清不清空输入框、预览留不留、重复导入怎么说。以前这套一致性只存在于
+一处 `when` 里，改一条分支没人知道另一条还在不在。
+
+三处边界被这刀明确下来：
+
+- **认包留在组合根。** `.qbext` / `.qbpatch` / `.qbk` 分别落到扩展、补丁、备份三个功能上，
+  而认包类型要用 `infrastructure` 的探针 —— 子控制器不许碰，所以分发仍在组合根。
+- **结论做成返回值 `ImportVerdict`，不是提示。** 题库落库可能让某个"等待题库"的扩展包当场生效，
+  而"哪一个生效了"要比对落库前后的扩展清单，那两份清单都只在组合根手里。
+- **忙碌标记不进来。** 什么时候算"忙"取决于谁在等这次导入，由调用点决定。
+
+顺手删掉一处死字段：`lastImportNotes` 只写不读，没有任何界面引用它。
+
+调用方 16 行：`ImportScreen` 13 处、`ExtensionsScreen` 3 处，全部是
+`controller.importXxx` → `controller.importing.xxx`。`openImport` / `importDroppedFile` /
+`pickPackageFile` / `confirmImport` 留在组合根 —— 它们要么导航，要么分发。
+
+新增用例 `importingTheSameTextTwiceCreatesNoCopyAndKeepsThePreview`：同一份材料导两次
+不许建副本，第二次仍要把预览留在页面上（清空输入框是为了防止再点一次，但清空预览
+就只剩一句错误横幅，看不出这次导进去了什么）。
+
+文件从 2530 行降到 2476 行；619 → 620 用例全绿，行为不变。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
@@ -312,8 +342,8 @@ ID 是进度、复核、错题本匹配题目的唯一依据，撞了就会让�
 | MSI 只在本机试装流程 | 没有在干净虚拟机里完整走"安装 → 运行 → 升级 → 卸载"，升级兼容性只有 `upgradeUuid` 这一层保证 |
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
-| 组合根仍偏大 | 已从 3371 行降到 2530 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列七刀），还有 4 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 619 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
+| 组合根仍偏大 | 已从 3371 行降到 2476 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入八刀），还有 3 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 620 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 

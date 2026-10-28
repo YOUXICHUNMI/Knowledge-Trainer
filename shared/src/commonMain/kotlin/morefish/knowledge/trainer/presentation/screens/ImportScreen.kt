@@ -78,8 +78,8 @@ fun ImportScreen(controller: AppController, sample: String) {
         StaggeredAppear(1) {
             Column {
                 OutlinedTextField(
-                    value = controller.importTitle,
-                    onValueChange = controller::updateImportTitle,
+                    value = controller.importing.title,
+                    onValueChange = controller.importing::updateTitle,
                     label = { Text("题库名称（可留空）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -88,8 +88,8 @@ fun ImportScreen(controller: AppController, sample: String) {
                 )
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
-                    value = controller.importText,
-                    onValueChange = controller::updateImportText,
+                    value = controller.importing.text,
+                    onValueChange = controller.importing::updateText,
                     label = { Text("题库 JSON / NDJSON") },
                     modifier = Modifier.fillMaxWidth().height(240.dp),
                     shape = RoundedCornerShape(14.dp),
@@ -97,14 +97,14 @@ fun ImportScreen(controller: AppController, sample: String) {
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton("解析预览", onClick = { controller.previewImport(ChoiceMapping.AUTO) })
-                    SecondaryButton("载入示例", onClick = { controller.updateImportText(sample) })
+                    PrimaryButton("解析预览", onClick = { controller.importing.previewText(ChoiceMapping.AUTO) })
+                    SecondaryButton("载入示例", onClick = { controller.importing.updateText(sample) })
                     GhostButton("跳过预览直接导入", onClick = { controller.confirmImport(ChoiceMapping.AUTO) })
                 }
             }
         }
 
-        controller.importError?.let { error ->
+        controller.importing.error?.let { error ->
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Pill("失败", Palette.Wrong, Palette.WrongSoft)
@@ -114,13 +114,13 @@ fun ImportScreen(controller: AppController, sample: String) {
         }
 
         AnimatedVisibility(
-            visible = controller.importPreview != null,
+            visible = controller.importing.preview != null,
             enter = fadeIn(tween(Motion.StandardMillis)) + expandVertically(tween(Motion.EmphasisMillis)),
             exit = fadeOut(tween(Motion.QuickMillis)) + shrinkVertically(tween(Motion.StandardMillis)),
         ) {
             Column {
                 Spacer(Modifier.height(16.dp))
-                controller.importPreview?.let { preview -> PreviewPanel(preview, controller) }
+                controller.importing.preview?.let { preview -> PreviewPanel(preview, controller) }
             }
         }
 
@@ -183,7 +183,7 @@ private fun QbankFilePanel(controller: AppController) {
                     color = Palette.Ink,
                 )
                 Text(
-                    if (controller.filePickerAvailable) {
+                    if (controller.importing.pickerAvailable) {
                         "选择文件或直接把包拖进窗口；作者已在包内声明题型与答案"
                     } else {
                         "作者已声明题型与答案，推荐优先用包导入"
@@ -202,7 +202,7 @@ private fun QbankFilePanel(controller: AppController) {
         }
 
         Spacer(Modifier.height(16.dp))
-        if (controller.filePickerAvailable) {
+        if (controller.importing.pickerAvailable) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PrimaryButton(
                     text = if (controller.busy) "校验中…" else "选择 .qbank / .qbext 文件",
@@ -210,7 +210,7 @@ private fun QbankFilePanel(controller: AppController) {
                     enabled = !controller.busy,
                     leading = "⌘",
                 )
-                controller.pickedFileName?.let { name ->
+                controller.importing.pickedFileName?.let { name ->
                     Spacer(Modifier.width(12.dp))
                     Text(
                         "最近：$name",
@@ -227,7 +227,7 @@ private fun QbankFilePanel(controller: AppController) {
             )
         } else {
             Text(
-                controller.filePickerUnavailableReason ?: "当前平台不能选择文件",
+                controller.importing.pickerUnavailableReason ?: "当前平台不能选择文件",
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Pending,
             )

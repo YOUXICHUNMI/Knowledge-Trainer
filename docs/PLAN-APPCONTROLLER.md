@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2530 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530） |
+| `AppController.kt` | 2476 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，619 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，620 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -33,7 +33,7 @@ presentation/
   editor/QuestionEditorController.kt ✅ 已拆
   review/ReviewController.kt        ✅ 已拆
   batch/BatchController.kt          ✅ 已拆
-  importing/ImportController.kt
+  importing/ImportController.kt    ✅ 已拆
   practice/PracticeController.kt
   graph/GraphController.kt
   backup/BackupController.kt
@@ -70,7 +70,7 @@ presentation/
 | 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | ✅ 已完成 |
 | 6 | 历史复核 | ~199 | `ReviewScreens` | ✅ 已完成 |
 | 7 | 批量队列 | ~211 | `AiScreen` | ✅ 已完成 |
-| 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | 待做 |
+| 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | ✅ 已完成 |
 | 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | 待做 |
 | 10 | 个人知识图谱 | ~429 | `GraphScreen` | 待做 |
 | 11 | 备份与迁移（.qbk） | ~437 | `BackupScreen` | 待做 |
@@ -251,3 +251,30 @@ presentation/
   0 次请求、0 条完成。这条钉住 [resolve] 的存在理由——用内存里那份旧题库发请求，
   就是拿已经不存在的内容在花钱。
 - 文件从 2716 行降到 2530 行；618 → 619 用例全绿，行为不变。
+
+## 已完成的第八刀（导入）
+
+- 新增 `presentation/importing/ImportController.kt`（246 行）：粘贴文本、`.qbank` 包、
+  "选文件"入口、解析预览、行内错误、最近处理的文件名。
+- 值得单独存在的理由不是"字段多"，而是**两条输入路径共用一套结论**：文本走宽松导入
+  （允许部分题目有问题、其余照常导入、要题型映射），包走严格校验（错一条整包拒绝、
+  不做映射）。过程完全不同，但"导入之后"必须一致 —— 清不清空输入框、预览留不留、
+  重复导入怎么说。这套一致性以前只存在于一处 `when` 里，改一条分支没人知道另一条还在不在。
+- **认包没有搬。** `.qbext` / `.qbpatch` / `.qbk` 分别落到扩展、补丁、备份三个功能上，
+  而认包类型要用 `infrastructure` 的探针 —— 子控制器不许碰，所以分发留在组合根。
+  这也正是"跨功能编排留在组合根"那条规则第一次真正被用到。
+- **结论做成返回值**（`ImportVerdict`）：题库落库可能让某个"等待题库"的扩展包当场生效，
+  而"哪一个生效了"要比对落库前后的扩展清单 —— 两份清单都只在组合根手里。
+  让导入控制器自己拼这句话，就得把扩展包状态也搬进来，两个功能从此互相引用。
+  `Rejected` 刻意不带信息：行内已经写了"没有可导入的题目"，横幅再说一遍只是重复。
+- **成功之后清不清空输入框，由来源决定。** 文本导入清空（防止用户再点一次，点了也只会
+  撞重复），包导入不清（输入框里那段 JSON 与这次导的包无关，替用户删掉等于替他丢东西）。
+  这条差异写在 `accept(outcome, fromText)` 的参数名上，不靠读调用点猜。
+- 顺手删掉一处死字段：`lastImportNotes` 只写不读，没有任何界面引用。
+- 调用方 16 行：`ImportScreen` 13 处、`ExtensionsScreen` 3 处，全部是
+  `controller.importXxx` → `controller.importing.xxx`。`openImport` / `importDroppedFile` /
+  `pickPackageFile` / `confirmImport` 留在组合根：它们要么导航，要么分发。
+- 新增用例 `importingTheSameTextTwiceCreatesNoCopyAndKeepsThePreview`：同一份材料导两次
+  不许建副本，第二次仍要把预览留在页面上 —— 清空输入框是为了防止再点一次，
+  但连预览一起丢掉，用户就只剩一句错误横幅，看不出这次导进去了什么。
+- 文件从 2530 行降到 2476 行；619 → 620 用例全绿，行为不变。

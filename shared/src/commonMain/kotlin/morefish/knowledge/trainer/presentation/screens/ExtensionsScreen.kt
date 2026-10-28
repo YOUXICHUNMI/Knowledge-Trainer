@@ -96,7 +96,7 @@ fun ExtensionsScreen(controller: AppController) {
 
         Spacer(Modifier.height(14.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (controller.filePickerAvailable) {
+            if (controller.importing.pickerAvailable) {
                 PrimaryButton(
                     text = if (controller.busy) "校验中…" else "选择 .qbext 文件",
                     onClick = controller::pickPackageFile,
@@ -105,12 +105,12 @@ fun ExtensionsScreen(controller: AppController) {
                 )
             } else {
                 Text(
-                    controller.filePickerUnavailableReason ?: "当前平台不能选择文件",
+                    controller.importing.pickerUnavailableReason ?: "当前平台不能选择文件",
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.Pending,
                 )
             }
-            controller.pickedFileName?.let { name ->
+            controller.importing.pickedFileName?.let { name ->
                 Spacer(Modifier.width(12.dp))
                 Text("最近：$name", style = MaterialTheme.typography.bodySmall, color = Palette.Muted)
             }
