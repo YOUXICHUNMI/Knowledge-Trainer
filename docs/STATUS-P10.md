@@ -90,7 +90,7 @@ release APK 9.7 MB 未签名），桌面端 exe 实测可启动；
 
 | 产物 | 大小 | sha256（前 16 位） | 状态 |
 |---|---:|---|---|
-| `desktopApp/build/compose/binaries/main/msi/KnowledgeTrainer-1.0.0.msi` | 63.7 MB | `cd414e298ece176d…` | 可安装 |
+| `desktopApp/build/compose/binaries/main/msi/KnowledgeTrainer-1.0.0.msi` | 63.8 MB | `9ae16269b088096f…` | 可安装（描述改英文后重打；MSI 内含时间戳，sha 每次构建都不同） |
 | `desktopApp/.../app/KnowledgeTrainer/`（免安装目录） | 129 MB | — | 含 `KnowledgeTrainer.exe` + 精简运行时 |
 | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` | 13.6 MB | `e959e5a3629b2e19…` | 可直接装 |
 | `androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk` | 9.7 MB | `d657e1e362e4979e…` | **未签名**，需作者 keystore 才能装 |
@@ -648,6 +648,23 @@ Linux 上用 LF 重建必然不同；minimal 没有 `media/`，所以它是绿�
 修完第二轮 `40672228922`：`toolchain`、`jvm-tests`、`screenshots` **三个全绿**，截图 job 用时 4 分 17 秒，
 `核对张数` 那一步报的是 74/74。
 
+**③ 手动触发后还发现第三个：Windows 桌面打包 `light.exe` 退 311（LGHT0311）。**
+这一条差点漏过去 —— Gradle 对 jpackage 的失败只说 `External tool execution failed / Exit code: 1`，
+真正的错因在 `desktopApp/build/compose/logs/packageMsi/jpackage-*-err.txt` 里，而它没有被上传。
+先补了"失败时上传 jpackage 日志"这一步，再跑一次才看到：`light.exe` 拒收一句字符串，
+因为它装不进 MSI 数据库的码页。那句字符串就是 `--description "离线优先的知识训练工具：…"`。
+MSI 的码页跟着**构建机的 locale** 走（本机 zh-CN → 936，中文装得下；runner 是 en-US → 1252，中文装不下），
+所以这不是 CI 的问题 —— 任何英文 Windows 上都打不出这个包。`description` 改成英文，
+中文说明留在应用内与 README（要中文安装包属性得自定义 WiX 资源目录把 `Codepage` 设成 936，没做）。
+
+三个根因都修完之后，手动触发的 `40674749451` **五个 job 全绿**：
+`toolchain`、`jvm-tests`、`screenshots`、`android`（4m21s，首次在 runner 上打出 APK）、
+`desktop`（首次在 en-US runner 上打出 MSI，63.9 MiB）。产物都下载核对过：
+MSI 在 `msi/KnowledgeTrainer-1.0.0.msi`，截图 74 张齐全。
+
+三次失败的共同点值得记一句：**它们都不是"CI 配置写错了"，而是"只有换一台机器才会暴露的假设"** ——
+文件权限位、换行符、构建机 locale。本机能跑这件事，在这三处全都没有证明力。
+
 ### 绿灯之后还得把图下载下来看
 
 "张数对"只证明拍了 74 个文件，不证明这些文件能看 —— 缺 CJK 字体时文字会变成豆腐块，
@@ -670,7 +687,8 @@ fontconfig 做了替换，标题 "Knowledge Trainer" 与正文里的 "SQLite"、
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 只跑通了三档 | 2026-10-28 首轮全红（gradlew 权限位、CRLF），修后 `toolchain` / `jvm-tests` / `screenshots` 三个 job 全绿；`android` 与 `desktop` 仍只声明在 `workflow_dispatch` 里，**一次都没在 runner 上跑过** —— 它们要拉 SDK 与 WiX，失败点不可预知 |
+| CI 的产物只验到「打得出」 | 2026-10-28 修完三处根因后，五个 job 全部在真实 runner 上绿过，APK 与 MSI 都能产出；但**没有在 runner 上装过、跑过** —— runner 是临时机器，"能打"与"能装能跑"是两件事 |
+| MSI 的描述是英文 | MSI 数据库的码页跟着构建机 locale 走，中文 `description` 在任何 en-US Windows 上都会让 light.exe 退 311；要中文得自定义 WiX 资源目录（`Codepage=936`），当前没做，安装包属性用英文、应用内仍是中文 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 | 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
@@ -684,11 +702,9 @@ fontconfig 做了替换，标题 "Knowledge Trainer" 与正文里的 "SQLite"、
 
 ## 下一步建议
 
-1. **把 `android` / `desktop` 两个 job 也跑一遍**：手动触发一次，看 Ubuntu 上能不能打 APK、
-   Windows runner 上能不能出 MSI。这两档从未在 runner 上跑过，是最可能再冒出
-   "本机能跑、CI 不能跑"的地方（`gradlew` 权限位就是这类问题）；
-2. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 移除 → 错题；
-3. **SQLite 存储层**（P11 规模，不能一刀切）：先解决「整库常驻内存 / 改一道题重写整个文件」。
+1. **真机验收**：MSI 与 APK 现在都能在 runner 上产出，但都没装过 —— 把它装到干净机器 / 真机上跑一遍
+   （安装 → 打开 → 导入 → 练习 → 移除 → 错题 → 卸载）；
+2. **SQLite 存储层**（P11 规模，不能一刀切）：先解决「整库常驻内存 / 改一道题重写整个文件」。
    它是唯一一处"换实现要跨平台分叉"的地方：Web（js/wasm）没有可用的 SQLite 驱动，
    所以只能 `jvm`/`android`/`ios` 走 SQLite、`js`/`wasm` 继续文件或内存，端口得先长出查询语义
    （现在 `TextStorage` 只会读整份文本，而 SQLite 的价值恰恰在"只读需要的部分"）。
