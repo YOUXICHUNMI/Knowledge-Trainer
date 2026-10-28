@@ -96,7 +96,7 @@ private fun NoteForm(controller: AppController, seed: Note) {
         focusedContainerColor = Palette.Panel,
         unfocusedContainerColor = Palette.Panel,
         cursorColor = Palette.Accent,
-        focusedLabelColor = Palette.Accent,
+        focusedLabelColor = Palette.AccentInk,
         unfocusedLabelColor = Palette.Muted,
     )
 
@@ -366,7 +366,7 @@ private fun QuestionRow(question: Question, onClick: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Pill(question.type.label, Palette.Accent, Palette.AccentSoft)
+            Pill(question.type.label, Palette.AccentInk, Palette.AccentSoft)
             Spacer(Modifier.width(8.dp))
             Text(
                 Markdown.plainExcerpt(question.promptMarkdown, 70),

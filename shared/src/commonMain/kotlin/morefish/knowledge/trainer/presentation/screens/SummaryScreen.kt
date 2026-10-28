@@ -91,7 +91,7 @@ fun SummaryScreen(controller: AppController) {
                             Spacer(Modifier.height(6.dp))
                             Pill(
                                 "加权正确率 ${(weighted * 100).toInt()}%",
-                                Palette.Accent,
+                                Palette.AccentInk,
                                 Palette.AccentSoft,
                             )
                         }

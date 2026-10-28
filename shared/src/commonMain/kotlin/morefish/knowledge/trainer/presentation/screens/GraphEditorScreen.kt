@@ -59,7 +59,7 @@ fun GraphEditorScreen(controller: AppController) {
         focusedContainerColor = Palette.Panel,
         unfocusedContainerColor = Palette.Panel,
         cursorColor = Palette.Accent,
-        focusedLabelColor = Palette.Accent,
+        focusedLabelColor = Palette.AccentInk,
         unfocusedLabelColor = Palette.Muted,
     )
 
@@ -273,7 +273,7 @@ private fun EndpointPicker(
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    Pill(hit.type.label, Palette.Accent, Palette.AccentSoft)
+                    Pill(hit.type.label, Palette.AccentInk, Palette.AccentSoft)
                 }
             }
         }

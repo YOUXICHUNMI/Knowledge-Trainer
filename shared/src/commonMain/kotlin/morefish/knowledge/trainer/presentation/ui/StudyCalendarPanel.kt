@@ -52,7 +52,7 @@ fun StudyCalendarPanel(calendar: StudyCalendar, modifier: Modifier = Modifier) {
             Spacer(Modifier.width(8.dp))
             Pill(
                 text = "连续 ${calendar.currentStreak} 天",
-                color = if (calendar.currentStreak > 0) Palette.Accent else Palette.Muted,
+                color = if (calendar.currentStreak > 0) Palette.AccentInk else Palette.Muted,
                 background = if (calendar.currentStreak > 0) Palette.AccentSoft else Palette.NeutralSoft,
             )
         }
@@ -174,10 +174,4 @@ private fun DayCell(day: StudyDay, level: Int, isToday: Boolean, onHover: (Boole
     )
 }
 
-private fun levelColor(level: Int): Color = when (level) {
-    0 -> Color(0xFFEDEBE1)
-    1 -> Color(0xFFDCD6F8)
-    2 -> Color(0xFFBAB0EF)
-    3 -> Color(0xFF8B7BE4)
-    else -> Palette.Accent
-}
+private fun levelColor(level: Int): Color = Palette.Heat.getOrElse(level) { Palette.AccentInk }

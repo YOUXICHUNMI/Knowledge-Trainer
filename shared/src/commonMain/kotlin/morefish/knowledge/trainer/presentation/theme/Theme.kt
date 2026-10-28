@@ -1,9 +1,11 @@
 package morefish.knowledge.trainer.presentation.theme
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
@@ -11,6 +13,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import morefish.knowledge.trainer.application.port.ThemeMode
 
 /**
  * 中文优先的字阶。
@@ -104,36 +107,81 @@ private val KtShapes = Shapes(
 /**
  * 唯一主题入口。所有平台共用，保证桌面 / Android / Web 的观感一致。
  *
- * 只有浅色：产品语境是"纸面 + 墨"，深色模式需要另一套语义色，
- * 没验证过就不假装支持 —— 但所有颜色都已令牌化，后续加深色只改本文件。
+ * 两套配色（暖纸 / 墨夜）都是令牌，见 [LightScheme] / [DarkScheme]。
+ *
+ * [dark] 是**已经解算过**的结论，不是用户的选择：用户选择三种（跟随系统 / 浅色 / 深色），
+ * 由 [ThemeMode.isDark] 在组合期问一次系统，再传到这里。这样主题这一层不需要知道
+ * "系统现在是什么"，测试里也能直接给一个确定的布尔值。
+ *
+ * **副作用**：进入时会把 [Palette.current] 切到对应方案。这是整棵子树的颜色来源，
+ * 所以调用方必须在切换时让子树重建（见 `AppContent` 的 `key(dark)`）。
  */
 @Composable
-fun KtTheme(content: @Composable () -> Unit) {
+fun KtTheme(dark: Boolean = false, content: @Composable () -> Unit) {
+    val scheme = if (dark) DarkScheme else LightScheme
+    Palette.use(scheme)
     MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Palette.Accent,
-            onPrimary = Palette.OnAccent,
-            primaryContainer = Palette.AccentSoft,
-            onPrimaryContainer = Palette.AccentDeep,
-            secondary = Palette.Ink,
-            onSecondary = Palette.OnAccent,
-            secondaryContainer = Palette.NeutralSoft,
-            onSecondaryContainer = Palette.Ink,
-            background = Palette.Canvas,
-            onBackground = Palette.Ink,
-            surface = Palette.Panel,
-            onSurface = Palette.Ink,
-            surfaceVariant = Palette.PanelMuted,
-            onSurfaceVariant = Palette.Muted,
-            outline = Palette.PanelBorderStrong,
-            outlineVariant = Palette.PanelBorder,
-            error = Palette.Wrong,
-            onError = Palette.OnAccent,
-            errorContainer = Palette.WrongSoft,
-            onErrorContainer = Palette.Wrong,
-        ),
+        colorScheme = if (dark) darkColorSchemeFrom(scheme) else lightColorSchemeFrom(scheme),
         typography = KtTypography,
         shapes = KtShapes,
         content = content,
     )
 }
+
+/** 用户的选择（跟随系统 / 浅色 / 深色）在组合期解算成"现在到底是不是深色"。 */
+@Composable
+fun ThemeMode.isDark(): Boolean = when (this) {
+    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+}
+
+private fun lightColorSchemeFrom(p: PaletteScheme) = lightColorScheme(
+    primary = p.accent,
+    onPrimary = p.onAccent,
+    primaryContainer = p.accentSoft,
+    onPrimaryContainer = p.accentDeep,
+    secondary = p.ink,
+    onSecondary = p.onAccent,
+    secondaryContainer = p.neutralSoft,
+    onSecondaryContainer = p.ink,
+    background = p.canvas,
+    onBackground = p.ink,
+    surface = p.panel,
+    onSurface = p.ink,
+    surfaceVariant = p.panelMuted,
+    onSurfaceVariant = p.muted,
+    outline = p.panelBorderStrong,
+    outlineVariant = p.panelBorder,
+    error = p.wrong,
+    onError = p.onAccent,
+    errorContainer = p.wrongSoft,
+    onErrorContainer = p.wrong,
+)
+
+/**
+ * 深色方案的 Material 映射与浅色逐项对应，唯一的差别是生成的 `ColorScheme` 类型：
+ * 它决定 Material 组件内部"按明暗分支"的那几处默认行为（涟漪、描边、滚动条等）。
+ */
+private fun darkColorSchemeFrom(p: PaletteScheme) = darkColorScheme(
+    primary = p.accent,
+    onPrimary = p.onAccent,
+    primaryContainer = p.accentSoft,
+    onPrimaryContainer = p.accentDeep,
+    secondary = p.ink,
+    onSecondary = p.onAccent,
+    secondaryContainer = p.neutralSoft,
+    onSecondaryContainer = p.ink,
+    background = p.canvas,
+    onBackground = p.ink,
+    surface = p.panel,
+    onSurface = p.ink,
+    surfaceVariant = p.panelMuted,
+    onSurfaceVariant = p.muted,
+    outline = p.panelBorderStrong,
+    outlineVariant = p.panelBorder,
+    error = p.wrong,
+    onError = p.onAccent,
+    errorContainer = p.wrongSoft,
+    onErrorContainer = p.wrong,
+)

@@ -2,6 +2,7 @@ package morefish.knowledge.trainer.presentation.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -48,6 +49,7 @@ import morefish.knowledge.trainer.presentation.SampleBank
 import morefish.knowledge.trainer.presentation.theme.HeroGradient
 import morefish.knowledge.trainer.presentation.richtext.Markdown
 import morefish.knowledge.trainer.presentation.theme.Palette
+import morefish.knowledge.trainer.presentation.theme.ThemeController
 import morefish.knowledge.trainer.presentation.ui.AnimatedCount
 import morefish.knowledge.trainer.presentation.ui.BannerHost
 import morefish.knowledge.trainer.presentation.ui.EmptyState
@@ -83,6 +85,7 @@ fun HomeScreen(controller: AppController) {
         title = "Knowledge Trainer",
         subtitle = "离线优先的知识训练器 · ${getPlatform().name}",
         overline = "学习台",
+        trailing = { ThemeSwitch(controller.theme) },
     ) {
         BannerHost(controller.banner, controller::dismissBanner)
 
@@ -347,7 +350,7 @@ private fun HeroCard(
                     progress = accuracy,
                     size = 86.dp,
                     stroke = 8.dp,
-                    color = Color(0xFFCFC6FF),
+                    color = Palette.HeroInk,
                     track = Color.White.copy(alpha = 0.16f),
                     contentColor = Color.White,
                     caption = "正确率",
@@ -392,7 +395,7 @@ private fun HeroAction(text: String, primary: Boolean, onClick: () -> Unit) {
         Text(
             text,
             style = MaterialTheme.typography.labelLarge,
-            color = if (primary) Palette.AccentDeep else Color.White,
+            color = if (primary) Palette.HeroActionInk else Color.White,
         )
     }
 }
@@ -404,7 +407,7 @@ private fun HeroAction(text: String, primary: Boolean, onClick: () -> Unit) {
 private fun ResumeCard(paused: PracticeSession, now: Long, controller: AppController) {
     Panel(accent = Palette.Accent) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Pill("未完成", Palette.Accent, Palette.AccentSoft)
+            Pill("未完成", Palette.AccentInk, Palette.AccentSoft)
             Spacer(Modifier.width(8.dp))
             Text(
                 controller.bankTitle(paused.bankId),
@@ -441,17 +444,11 @@ private fun ResumeCard(paused: PracticeSession, now: Long, controller: AppContro
 
 // ------------------------------------------------------------------ 题库卡片
 
-private val avatarColors = listOf(
-    Color(0xFF4A3ECB) to Color(0xFF8B7BE4),
-    Color(0xFF0B7B58) to Color(0xFF4CB79A),
-    Color(0xFFB4581F) to Color(0xFFE0A063),
-    Color(0xFF8B2C6B) to Color(0xFFC973AC),
-)
-
 @Composable
 private fun BankCard(bank: QuestionBank, controller: AppController, favoriteCount: Int, noteCount: Int) {
     val seed = bank.bankId.hashCode().let { if (it == Int.MIN_VALUE) 0 else it } and 0x7FFFFFFF
-    val pair = avatarColors[seed % avatarColors.size]
+    val seeds = Palette.BankSeeds
+    val pair = seeds[seed % seeds.size]
 
     // 移除是二次确认的：第一次点只把按钮换成"确认移除"，换卡片或重进首页都会退回去
     var confirmingRemove by remember(bank.bankId) { mutableStateOf(false) }
@@ -502,7 +499,7 @@ private fun BankCard(bank: QuestionBank, controller: AppController, favoriteCoun
                 Pill("第 ${bank.contentRevision} 版", Palette.Muted, Palette.PanelMuted)
                 Spacer(Modifier.width(6.dp))
             }
-            Pill("${bank.questionCount} 题", Palette.Accent, Palette.AccentSoft)
+            Pill("${bank.questionCount} 题", Palette.AccentInk, Palette.AccentSoft)
         }
 
         Spacer(Modifier.height(12.dp))
@@ -627,4 +624,38 @@ private fun provenanceCaption(provenance: BankProvenance): String? {
         if (provenance.license.isNotBlank()) add(provenance.license)
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
+/**
+ * 主题开关：点一下按「跟随系统 → 浅色 → 深色」循环。
+ *
+ * 不做下拉：只有三个值，下拉要点两下才生效，而"点一下换成下一个"一次就够了。
+ * 标签写的是**当前生效的那个**（跟随系统时就是这四个字），不是"点了会变成什么"——
+ * 后者要用户先在心里做一次取反，人多半会点错。
+ *
+ * 只放在首页：主题是"整台机器"的偏好，每个页面都摆一个既占地方又暗示它只影响当前页。
+ */
+@Composable
+private fun ThemeSwitch(theme: ThemeController) {
+    val source = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Palette.PanelMuted)
+            .border(1.dp, Palette.PanelBorder, CircleShape)
+            .hoverable(source)
+            .clickable(interactionSource = source, indication = null) { theme.cycle() }
+            .pressScale(source, pressedScale = 0.94f)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("◐", style = MaterialTheme.typography.labelLarge, color = Palette.Muted)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            theme.mode.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = Palette.Muted,
+            maxLines = 1,
+        )
+    }
 }

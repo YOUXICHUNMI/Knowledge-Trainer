@@ -218,8 +218,8 @@ private fun ExtensionCard(pack: ExtensionPack, controller: AppController, now: L
 
         Spacer(Modifier.height(10.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Pill("${pack.relationCount} 条关系", Palette.Accent, Palette.AccentSoft)
-            Pill("覆盖 ${pack.coveredQuestionCount} 题", Palette.Accent, Palette.AccentSoft)
+            Pill("${pack.relationCount} 条关系", Palette.AccentInk, Palette.AccentSoft)
+            Pill("覆盖 ${pack.coveredQuestionCount} 题", Palette.AccentInk, Palette.AccentSoft)
             Pill("${pack.annotationCount} 条注释", Palette.Muted, Palette.NeutralSoft)
         }
 

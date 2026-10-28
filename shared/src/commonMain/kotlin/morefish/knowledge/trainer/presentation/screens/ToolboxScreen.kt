@@ -176,10 +176,10 @@ private fun ResultBlock(outcome: CalcOutcome?, committed: Boolean) {
                 Text(
                     outcome.display,
                     style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace),
-                    color = if (committed) Palette.Accent else Palette.Ink,
+                    color = if (committed) Palette.AccentInk else Palette.Ink,
                 )
                 Spacer(Modifier.width(10.dp))
-                if (committed) Pill("已记录", Palette.Accent, Palette.AccentSoft)
+                if (committed) Pill("已记录", Palette.AccentInk, Palette.AccentSoft)
             }
 
             is CalcOutcome.Failure -> Column {
@@ -260,7 +260,7 @@ private fun KeyCap(key: KeySpec, modifier: Modifier, onClick: () -> Unit) {
     }
     val foreground = when (key.tone) {
         KeyTone.EQUALS -> Palette.OnAccent
-        KeyTone.ACTION -> Palette.Accent
+        KeyTone.ACTION -> Palette.AccentInk
         KeyTone.FUNCTION -> Palette.Muted
         else -> Palette.Ink
     }
@@ -413,7 +413,7 @@ private fun UnitSelector(label: String, unit: UnitDef, expanded: Boolean, onTogg
             .fillMaxWidth()
             .clip(shape)
             .background(if (expanded) Palette.AccentSoft else Palette.PanelMuted)
-            .border(1.dp, if (expanded) Palette.Accent else Palette.PanelBorder, shape)
+            .border(1.dp, if (expanded) Palette.AccentInk else Palette.PanelBorder, shape)
             .hoverable(source)
             .clickable(interactionSource = source, indication = null, onClick = onToggle)
             .pressScale(source)
@@ -425,7 +425,7 @@ private fun UnitSelector(label: String, unit: UnitDef, expanded: Boolean, onTogg
         Text(
             unit.symbol,
             style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
-            color = if (expanded) Palette.Accent else Palette.Ink,
+            color = if (expanded) Palette.AccentInk else Palette.Ink,
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -436,7 +436,7 @@ private fun UnitSelector(label: String, unit: UnitDef, expanded: Boolean, onTogg
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Text(if (expanded) "收起" else "换一个 ▾", style = MaterialTheme.typography.labelMedium, color = Palette.Accent)
+        Text(if (expanded) "收起" else "换一个 ▾", style = MaterialTheme.typography.labelMedium, color = Palette.AccentInk)
     }
 }
 
@@ -465,7 +465,7 @@ private fun ConversionResult(outcome: Conversion?, input: String, to: UnitDef) {
                         Text(
                             outcome.display,
                             style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
-                            color = Palette.Accent,
+                            color = Palette.AccentInk,
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -551,7 +551,7 @@ private fun UnitRow(unit: UnitDef, selected: Boolean, onClick: () -> Unit) {
         Text(
             unit.symbol,
             style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            color = if (selected) Palette.Accent else Palette.Ink,
+            color = if (selected) Palette.AccentInk else Palette.Ink,
             modifier = Modifier.width(78.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

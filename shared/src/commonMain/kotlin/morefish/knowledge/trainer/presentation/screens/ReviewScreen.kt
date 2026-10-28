@@ -176,7 +176,7 @@ private fun CandidateRow(controller: AppController, candidate: ReviewCandidate, 
     val attempt = candidate.attempt
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Pill(candidate.typeLabel, Palette.Accent, Palette.AccentSoft)
+            Pill(candidate.typeLabel, Palette.AccentInk, Palette.AccentSoft)
             Spacer(Modifier.width(8.dp))
             Text(
                 candidate.bankTitle,

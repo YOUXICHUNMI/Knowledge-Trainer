@@ -104,7 +104,7 @@ fun GraphScreen(controller: AppController) {
             Spacer(Modifier.height(12.dp))
             Panel(accent = Palette.Accent) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Pill("只看这道题", Palette.Accent, Palette.AccentSoft)
+                    Pill("只看这道题", Palette.AccentInk, Palette.AccentSoft)
                     Spacer(Modifier.weight(1f))
                     GhostButton("看全部关系", onClick = controller.graph::clearFocus)
                 }
@@ -206,7 +206,7 @@ private fun EdgeCard(view: GraphEdgeView, controller: AppController) {
             }
             if (packName != null) {
                 Spacer(Modifier.width(8.dp))
-                Pill("扩展包", Palette.Accent, Palette.AccentSoft)
+                Pill("扩展包", Palette.AccentInk, Palette.AccentSoft)
             }
             Spacer(Modifier.weight(1f))
             if (view.blocked) {
@@ -268,7 +268,7 @@ private fun EdgeCard(view: GraphEdgeView, controller: AppController) {
                 GhostButton("删除", onClick = { controller.deleteGraphEdge(edge.edgeId) }, color = Palette.Wrong)
             } else {
                 // 扩展包的关系没有"复核"这回事：包自带版本号，重装新版就是复核
-                GhostButton("看这个包", onClick = controller::openExtensions, color = Palette.Accent)
+                GhostButton("看这个包", onClick = controller::openExtensions, color = Palette.AccentInk)
             }
         }
     }
@@ -311,7 +311,7 @@ private fun EndpointColumn(resolution: RefResolution, modifier: Modifier = Modif
 
 /** 关系配色借用已有的四组语义色：不额外发明一套"图谱色"，界面才像同一套东西。 */
 internal fun relationColor(relation: GraphRelation): Color = when (relation) {
-    GraphRelation.RELATED -> Palette.Accent
+    GraphRelation.RELATED -> Palette.AccentInk
     GraphRelation.PREREQUISITE -> Palette.Pending
     GraphRelation.EXPLAINS -> Palette.Correct
     GraphRelation.CONTRASTS -> Palette.Wrong

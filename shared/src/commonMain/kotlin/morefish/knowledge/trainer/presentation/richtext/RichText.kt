@@ -190,7 +190,7 @@ private fun annotate(inlines: List<MdInline>, ink: Color): AnnotatedString = bui
             ) { append(inline.text) }
 
             is MdInline.Link -> withStyle(
-                SpanStyle(color = Palette.Accent, textDecoration = TextDecoration.Underline),
+                SpanStyle(color = Palette.AccentInk, textDecoration = TextDecoration.Underline),
             ) { append(inline.text) }
 
             is MdInline.Math -> append("\$" + inline.tex + "\$")
@@ -280,7 +280,7 @@ internal class InlineTypesetter(
     private fun tokensOf(inline: MdInline): List<InlineToken> = when (inline) {
         is MdInline.Math -> listOf(InlineToken.Box(math.layout(inline.tex, baseSizePx)))
         is MdInline.Code -> listOf(InlineToken.Box(codeBox(inline.text)))
-        is MdInline.Link -> chunksOf(inline.text, style.copy(textDecoration = TextDecoration.Underline), Palette.Accent)
+        is MdInline.Link -> chunksOf(inline.text, style.copy(textDecoration = TextDecoration.Underline), Palette.AccentInk)
         is MdInline.Text -> chunksOf(inline.text, styleFor(inline), ink)
     }
 
@@ -291,7 +291,7 @@ internal class InlineTypesetter(
     )
 
     private fun codeBox(text: String): MathBox {
-        val chunk = measure(text, style.copy(fontFamily = FontFamily.Monospace), codeSizePx, Palette.Accent)
+        val chunk = measure(text, style.copy(fontFamily = FontFamily.Monospace), codeSizePx, Palette.AccentInk)
         val pad = baseSizePx * 0.16f
         val box = MathBox(
             chunk.size.width + pad * 2,

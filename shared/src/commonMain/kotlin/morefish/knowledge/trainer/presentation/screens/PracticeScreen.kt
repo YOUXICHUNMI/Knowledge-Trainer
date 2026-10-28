@@ -236,7 +236,7 @@ private fun QuestionCard(item: SessionItem, index: Int, total: Int, controller: 
     val question = item.question
     Panel(padding = 20.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Pill(question.type.label, Palette.Accent, Palette.AccentSoft)
+            Pill(question.type.label, Palette.AccentInk, Palette.AccentSoft)
             // 本场选了某语言、这题却没有译文：必须标出来，不能让人以为看到的是译文
             if (controller.practice.currentQuestionShowsOriginal) {
                 Spacer(Modifier.width(6.dp))
@@ -311,12 +311,12 @@ private fun NoteLink(controller: AppController, questionId: String) {
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("✎", style = MaterialTheme.typography.labelLarge, color = Palette.Accent)
+        Text("✎", style = MaterialTheme.typography.labelLarge, color = Palette.AccentInk)
         Spacer(Modifier.width(4.dp))
         Text(
             if (existing != null) "笔记" else "写笔记",
             style = MaterialTheme.typography.labelMedium,
-            color = Palette.Accent,
+            color = Palette.AccentInk,
         )
     }
 }
@@ -335,7 +335,7 @@ private fun GraphLink(controller: AppController) {
     val count = ref?.let { controller.graph.edgeCountFor(it) } ?: 0
     val tint = when {
         controller.practice.blockedHardDependencies > 0 -> Palette.Wrong
-        count > 0 -> Palette.Accent
+        count > 0 -> Palette.AccentInk
         else -> Palette.Muted
     }
     val source = remember { MutableInteractionSource() }
@@ -406,7 +406,7 @@ private fun AiLink(controller: AppController) {
     val tint = when {
         controller.ai.busy -> Palette.Pending
         record?.state == AiRecordState.APPROVED -> Palette.Correct
-        record?.hasText == true -> Palette.Accent
+        record?.hasText == true -> Palette.AccentInk
         configured -> Palette.Muted
         else -> Palette.Faint
     }
@@ -451,7 +451,7 @@ private fun AiExplanationPanel(controller: AppController) {
     val record = controller.ai.currentExplanation
     Panel(background = Palette.PanelMuted, borderColor = Palette.AccentLine, padding = 16.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("✦", style = MaterialTheme.typography.labelLarge, color = Palette.Accent)
+            Text("✦", style = MaterialTheme.typography.labelLarge, color = Palette.AccentInk)
             Spacer(Modifier.width(6.dp))
             Text("AI 讲解", style = MaterialTheme.typography.titleSmall, color = Palette.Ink)
             if (record != null) {
@@ -538,7 +538,7 @@ private fun aiTint(state: AiRecordState): Color = when (state) {
     AiRecordState.APPROVED -> Palette.Correct
     AiRecordState.REJECTED, AiRecordState.FAILED -> Palette.Wrong
     AiRecordState.NEEDS_REVIEW -> Palette.Pending
-    else -> Palette.Accent
+    else -> Palette.AccentInk
 }
 
 private fun aiSoft(state: AiRecordState): Color = when (state) {
@@ -579,7 +579,7 @@ private fun AnswerArea(item: SessionItem, controller: AppController, revealed: B
                 disabledContainerColor = Palette.PanelMuted,
                 disabledBorderColor = Palette.PanelBorder,
                 cursorColor = Palette.Accent,
-                focusedLabelColor = Palette.Accent,
+                focusedLabelColor = Palette.AccentInk,
                 unfocusedLabelColor = Palette.Muted,
             ),
         )
@@ -729,7 +729,7 @@ private fun OptionRow(
     val targetBorder = when {
         isCorrect -> Palette.Correct
         isWrong -> Palette.Wrong
-        selected -> Palette.Accent
+        selected -> Palette.AccentInk
         else -> Palette.PanelBorder
     }
     val borderWidth by animateDpAsState(
@@ -782,6 +782,8 @@ private fun OptionRow(
 
 @Composable
 private fun LetterBadge(label: String, selected: Boolean, multiple: Boolean, revealed: Boolean) {
+    // 序号徽标是「整块上色 + 压白字」，用当底的 Accent；
+    // AccentInk 在深色下是浅紫，白字压上去会看不见。
     val bg = animatedTint(if (selected) Palette.Accent else Palette.NeutralSoft)
     val fg = animatedTint(if (selected) Palette.OnAccent else Palette.Muted)
     val shape = if (multiple) RoundedCornerShape(8.dp) else CircleShape

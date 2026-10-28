@@ -23,6 +23,7 @@ import morefish.knowledge.trainer.application.port.InMemoryMediaStore
 import morefish.knowledge.trainer.application.port.InMemoryTextStorage
 import morefish.knowledge.trainer.application.port.MediaStore
 import morefish.knowledge.trainer.application.port.NoteRepository
+import morefish.knowledge.trainer.application.port.PreferencesStore
 import morefish.knowledge.trainer.application.port.QuestionLocation
 import morefish.knowledge.trainer.application.port.RevisionRepository
 import morefish.knowledge.trainer.application.port.RestoreRecovery
@@ -92,6 +93,7 @@ import morefish.knowledge.trainer.presentation.notes.NoteDelete
 import morefish.knowledge.trainer.presentation.practice.PracticeController
 import morefish.knowledge.trainer.presentation.practice.PracticeResume
 import morefish.knowledge.trainer.presentation.review.ReviewController
+import morefish.knowledge.trainer.presentation.theme.ThemeController
 import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
 import morefish.knowledge.trainer.presentation.setup.SetupStart
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxController
@@ -109,6 +111,7 @@ import morefish.knowledge.trainer.infrastructure.storage.JsonExtensionRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonFavoriteRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonGraphRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonNoteRepository
+import morefish.knowledge.trainer.infrastructure.storage.JsonPreferencesRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonRevisionRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonReviewRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonSessionRepository
@@ -161,6 +164,14 @@ class AppDependencies(
     val aiBatchRepository: AiBatchRepository = JsonAiBatchRepository(storage)
     val revisionRepository: RevisionRepository = JsonRevisionRepository(storage)
     val reviewRepository: ReviewRepository = JsonReviewRepository(storage)
+
+    /**
+     * 界面偏好（目前只有主题）。
+     *
+     * 它和业务数据一样存在数据目录里，因此进备份、也跟着恢复：
+     * 换机器之后"这台机器长什么样"也该一起搬过去。
+     */
+    val preferences: PreferencesStore = JsonPreferencesRepository(storage)
 
     companion object {
         /** 内存组合根：供 Preview 与不支持文件系统的平台使用。 */
@@ -272,6 +283,14 @@ class AppController(
 
     var history by mutableStateOf<List<AttemptRecord>>(emptyList())
         private set
+
+    /**
+     * 主题选择（跟随系统 / 浅色 / 深色）。
+     *
+     * 它不改任何业务数据，也不参与导航 —— 是这棵树上唯一一个"只影响观感"的状态。
+     * 放在组合根上的理由和别处一样：它要写盘，而写盘是组合根的职责。
+     */
+    val theme = ThemeController(store = deps.preferences, scope = scope)
 
     /**
      * 历史页的筛选与派生视图（日历、错题本）。
@@ -564,6 +583,8 @@ class AppController(
      * 但**读**的顺序仍要保证图谱看到的是已经装好的扩展包。
      */
     private suspend fun loadAll() {
+        // 主题先读：它是唯一影响"这一帧怎么画"的状态，晚一步就会先闪一下浅色
+        theme.load()
         banks = deps.bankRepository.list()
         latestRevisions = deps.revisionRepository.latestAll()
         // 历史读进来就套上复核结果：统计、错题本、日历因此不需要知道复核存在
@@ -594,6 +615,8 @@ class AppController(
             ?: deps.aiRepository.loadWarnings.firstOrNull()
             ?: deps.aiBatchRepository.loadWarnings.firstOrNull()
             ?: deps.revisionRepository.loadWarnings.firstOrNull()
+            // 排最后：主题读不出来只是"回到跟随系统"，不该盖掉任何一条关于数据的警告
+            ?: deps.preferences.loadWarnings.firstOrNull()
         if (warning != null) banner = Banner(warning, isError = false)
         // 装了扩展包但题库还没到：这不是错误，但用户有权知道"它为什么没反应"
         if (banner == null && pendingExtensions.isNotEmpty()) {

@@ -610,7 +610,7 @@ private fun passFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Palette.Panel,
     unfocusedContainerColor = Palette.Panel,
     cursorColor = Palette.Accent,
-    focusedLabelColor = Palette.Accent,
+    focusedLabelColor = Palette.AccentInk,
     unfocusedLabelColor = Palette.Muted,
 )
 
@@ -619,7 +619,7 @@ private fun EncryptedBadge() {
     Text(
         "已加密",
         style = MaterialTheme.typography.labelSmall,
-        color = Palette.Accent,
+        color = Palette.AccentInk,
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .background(Palette.AccentSoft)

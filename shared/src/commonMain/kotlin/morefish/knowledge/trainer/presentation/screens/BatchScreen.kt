@@ -109,7 +109,7 @@ private fun NewJobPanel(controller: AppController) {
         focusedContainerColor = Palette.Panel,
         unfocusedContainerColor = Palette.Panel,
         cursorColor = Palette.Accent,
-        focusedLabelColor = Palette.Accent,
+        focusedLabelColor = Palette.AccentInk,
         unfocusedLabelColor = Palette.Muted,
     )
 
@@ -207,7 +207,7 @@ private fun JobPanel(controller: AppController, job: AiBatchJob) {
     var showFailures by remember(job.jobId) { mutableStateOf(false) }
 
     Panel(accent = when (job.state) {
-        AiBatchState.RUNNING -> Palette.Accent
+        AiBatchState.RUNNING -> Palette.AccentInk
         AiBatchState.PAUSED -> Palette.Pending
         AiBatchState.COMPLETED -> Palette.Correct
         else -> Palette.Neutral
@@ -409,7 +409,7 @@ private fun JobHistoryPanel(controller: AppController) {
 }
 
 private fun stateTint(state: AiBatchState) = when (state) {
-    AiBatchState.RUNNING -> Palette.Accent
+    AiBatchState.RUNNING -> Palette.AccentInk
     AiBatchState.PAUSED -> Palette.Pending
     AiBatchState.COMPLETED -> Palette.Correct
     AiBatchState.CANCELLED -> Palette.Wrong

@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.presentation.Banner
+import morefish.knowledge.trainer.presentation.theme.AccentGradient
 import morefish.knowledge.trainer.presentation.theme.Palette
 
 fun verdictColor(verdict: Verdict): Color = when (verdict) {
@@ -135,7 +136,7 @@ fun ScreenScaffold(
                 .height(300.dp)
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color(0xFFEDEAFB), Palette.Canvas.copy(alpha = 0f)),
+                        listOf(Palette.GlowTop, Palette.Canvas.copy(alpha = 0f)),
                     ),
                 ),
         )
@@ -297,7 +298,7 @@ fun EmptyState(
                     .background(Palette.AccentSoft),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(glyph, style = MaterialTheme.typography.titleMedium, color = Palette.Accent)
+                Text(glyph, style = MaterialTheme.typography.titleMedium, color = Palette.AccentInk)
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -409,6 +410,7 @@ fun KtChip(
     val background = animatedTint(
         when {
             !enabled -> Palette.PanelMuted
+            // 胶囊选中是"整块上色 + 压白字"，所以用当底色用的 Accent，不是 AccentInk
             selected -> Palette.Accent
             else -> Palette.Panel
         },
@@ -454,7 +456,7 @@ fun ProgressLine(
     height: Dp = 6.dp,
     rounded: Boolean = true,
     track: Color = Palette.NeutralSoft,
-    brush: Brush = Brush.horizontalGradient(listOf(Palette.Accent, Color(0xFF7B66EC))),
+    brush: Brush = AccentGradient,
 ) {
     val grown = rememberGrowth(progress.coerceIn(0f, 1f))
     val shape = if (rounded) RoundedCornerShape(height) else RoundedCornerShape(0.dp)

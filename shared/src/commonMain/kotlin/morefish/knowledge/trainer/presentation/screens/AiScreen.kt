@@ -88,7 +88,7 @@ private fun BatchEntry(controller: AppController) {
             Text("批量生成", style = MaterialTheme.typography.titleSmall, color = Palette.Ink)
             Spacer(Modifier.width(8.dp))
             when {
-                running -> Pill("生成中", Palette.Accent, Palette.AccentSoft)
+                running -> Pill("生成中", Palette.AccentInk, Palette.AccentSoft)
                 pending > 0 -> Pill("$pending 个待续", Palette.Pending, Palette.PendingSoft)
                 else -> Unit
             }
@@ -204,7 +204,7 @@ private fun ConfigPanel(controller: AppController) {
         focusedContainerColor = Palette.Panel,
         unfocusedContainerColor = Palette.Panel,
         cursorColor = Palette.Accent,
-        focusedLabelColor = Palette.Accent,
+        focusedLabelColor = Palette.AccentInk,
         unfocusedLabelColor = Palette.Muted,
     )
 
@@ -487,7 +487,7 @@ private fun stateColor(state: AiRecordState) = when (state) {
     AiRecordState.APPROVED -> Palette.Correct
     AiRecordState.REJECTED, AiRecordState.FAILED -> Palette.Wrong
     AiRecordState.NEEDS_REVIEW -> Palette.Pending
-    else -> Palette.Accent
+    else -> Palette.AccentInk
 }
 
 private fun stateSoft(state: AiRecordState) = when (state) {

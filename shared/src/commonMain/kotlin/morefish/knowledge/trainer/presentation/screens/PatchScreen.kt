@@ -165,7 +165,7 @@ private fun PatchHeader(intake: PatchIntake.Ready) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(patch.name, style = MaterialTheme.typography.titleMedium, color = Palette.Ink)
             Spacer(Modifier.width(8.dp))
-            Pill("v${patch.version}", Palette.Accent, Palette.AccentSoft)
+            Pill("v${patch.version}", Palette.AccentInk, Palette.AccentSoft)
             Spacer(Modifier.weight(1f))
             Pill(
                 "第 ${patch.baseRevision} 版 → 第 ${patch.targetRevision} 版",
@@ -367,7 +367,7 @@ private fun kindTint(kind: PatchChangeKind): Color = when (kind) {
     PatchChangeKind.ADDED -> Palette.Correct
     PatchChangeKind.REMOVED -> Palette.Wrong
     PatchChangeKind.ANSWER -> Palette.Pending
-    PatchChangeKind.CONTENT -> Palette.Accent
+    PatchChangeKind.CONTENT -> Palette.AccentInk
     PatchChangeKind.PROVENANCE -> Palette.Muted
 }
 

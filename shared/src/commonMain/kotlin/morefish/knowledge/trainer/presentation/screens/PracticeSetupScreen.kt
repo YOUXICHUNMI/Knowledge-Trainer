@@ -250,12 +250,12 @@ fun PracticeSetupScreen(controller: AppController) {
                                 AnimatedCount(
                                     value = planned,
                                     style = MaterialTheme.typography.displaySmall,
-                                    color = Palette.Accent,
+                                    color = Palette.AccentInk,
                                 )
                                 Text(
                                     "题",
                                     style = MaterialTheme.typography.titleSmall,
-                                    color = Palette.Accent,
+                                    color = Palette.AccentInk,
                                     modifier = Modifier.padding(bottom = 4.dp),
                                 )
                             }

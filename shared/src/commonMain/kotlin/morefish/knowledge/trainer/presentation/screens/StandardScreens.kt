@@ -200,7 +200,7 @@ private fun ToolsBody() {
                     Text(
                         "${index + 1}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Palette.Accent,
+                        color = Palette.AccentInk,
                         modifier = Modifier.width(18.dp),
                     )
                     Text(hint, style = MaterialTheme.typography.bodyMedium, color = Palette.Ink)
@@ -249,7 +249,7 @@ private fun ToolsBody() {
 @Composable
 private fun ExampleRow(name: String, description: String) {
     Row(verticalAlignment = Alignment.Top) {
-        Pill(name, Palette.Accent, Palette.AccentSoft)
+        Pill(name, Palette.AccentInk, Palette.AccentSoft)
         Spacer(Modifier.width(10.dp))
         Text(description, style = MaterialTheme.typography.bodySmall, color = Palette.Muted)
     }
@@ -283,7 +283,7 @@ private fun NumberBadge(n: Int) {
             .background(Palette.AccentSoft, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text("$n", style = MaterialTheme.typography.labelMedium, color = Palette.Accent)
+        Text("$n", style = MaterialTheme.typography.labelMedium, color = Palette.AccentInk)
     }
 }
 

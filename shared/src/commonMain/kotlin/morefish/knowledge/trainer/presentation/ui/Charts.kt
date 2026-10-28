@@ -43,7 +43,7 @@ fun RingMeter(
     modifier: Modifier = Modifier,
     size: Dp = 88.dp,
     stroke: Dp = 9.dp,
-    color: Color = Palette.Accent,
+    color: Color = Palette.AccentInk,
     track: Color = Palette.NeutralSoft,
     contentColor: Color = Palette.Ink,
     caption: String? = null,

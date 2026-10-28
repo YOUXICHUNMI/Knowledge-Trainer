@@ -136,7 +136,7 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Palette.Panel,
     unfocusedContainerColor = Palette.Panel,
     cursorColor = Palette.Accent,
-    focusedLabelColor = Palette.Accent,
+    focusedLabelColor = Palette.AccentInk,
     unfocusedLabelColor = Palette.Muted,
 )
 
@@ -173,7 +173,7 @@ private fun QbankFilePanel(controller: AppController) {
                     .background(Palette.AccentSoft)
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             ) {
-                Text("QBF", style = MaterialTheme.typography.labelLarge, color = Palette.Accent)
+                Text("QBF", style = MaterialTheme.typography.labelLarge, color = Palette.AccentInk)
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -280,7 +280,7 @@ private fun PreviewPanel(preview: ImportPreview, controller: AppController) {
                 preview.detectedTypes.entries.forEach { entry ->
                     Pill(
                         "${entry.key.label} ${entry.value}",
-                        Palette.Accent,
+                        Palette.AccentInk,
                         Palette.AccentSoft,
                     )
                 }

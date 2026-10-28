@@ -76,7 +76,7 @@ private fun EditorForm(controller: AppController) {
         focusedContainerColor = Palette.Panel,
         unfocusedContainerColor = Palette.Panel,
         cursorColor = Palette.Accent,
-        focusedLabelColor = Palette.Accent,
+        focusedLabelColor = Palette.AccentInk,
         unfocusedLabelColor = Palette.Muted,
     )
 

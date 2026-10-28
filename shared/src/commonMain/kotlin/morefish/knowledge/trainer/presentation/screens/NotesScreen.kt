@@ -98,7 +98,7 @@ fun NotesScreen(controller: AppController) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Pill(
                     "只看：${bankFilterTitle ?: "已删除的题库"}",
-                    Palette.Accent,
+                    Palette.AccentInk,
                     Palette.AccentSoft,
                 )
                 Spacer(Modifier.width(4.dp))
@@ -244,7 +244,7 @@ private fun questionOf(controller: AppController, note: Note): Question? {
 }
 
 private fun scopeColor(scope: NoteScope) = when (scope) {
-    NoteScope.BANK -> Palette.Accent
+    NoteScope.BANK -> Palette.AccentInk
     NoteScope.QUESTION -> Palette.Correct
     NoteScope.DRAFT -> Palette.Pending
 }

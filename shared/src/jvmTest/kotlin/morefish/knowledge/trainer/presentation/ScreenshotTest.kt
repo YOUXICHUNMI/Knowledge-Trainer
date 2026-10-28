@@ -37,6 +37,7 @@ import morefish.knowledge.trainer.domain.tools.Dimension
 import morefish.knowledge.trainer.domain.tools.Units
 import morefish.knowledge.trainer.infrastructure.archive.Sha256
 import morefish.knowledge.trainer.application.port.ChoiceMapping
+import morefish.knowledge.trainer.application.port.ThemeMode
 import morefish.knowledge.trainer.infrastructure.storage.JsonGraphRepository
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxTab
 import morefish.knowledge.trainer.presentation.toolbox.ConvPicker
@@ -1249,6 +1250,69 @@ class ScreenshotTest {
         root.deleteRecursively()
     }
 
+    /**
+     * 深色模式：同一套页面换一套令牌。
+     *
+     * 单独一个方法，而不是把 54 张全部重拍两遍 —— 深色要核对的只有三件事：
+     * 字还读不读得出来、语义色还分不分得清、有没有哪一块还是浅色漏出来。
+     * 挑首页（信息最密）、反馈页（语义色最多）、手机宽度（主题胶囊会不会挤掉标题）。
+     */
+    @Test
+    fun renderDarkScreens() {
+        if (System.getenv("KT_SHOTS") != "1") {
+            println("跳过 renderDarkScreens：设置 KT_SHOTS=1 才会渲染")
+            return
+        }
+
+        val storage = InMemoryTextStorage()
+        val deps = AppDependencies(storage)
+        val controller = AppController(deps, CoroutineScope(Dispatchers.Unconfined))
+        val imported = runBlocking {
+            val outcome = ImportBankUseCase(deps.bankRepository, clock = deps.clock)
+                .import(SampleBank.json, ChoiceMapping.AUTO, "示例题库", "screenshot")
+            (outcome as? ImportOutcome.Imported)?.bank ?: error("示例题库导入失败：$outcome")
+        }
+        runBlocking { fakeHistory(imported).forEach { deps.attemptRepository.append(it) } }
+        controller.refresh()
+        controller.theme.set(ThemeMode.DARK)
+
+        shot("55-home-dark") { AppContent(controller) }
+
+        shot("56-practice-feedback-dark") {
+            controller.startPractice(imported, questionCount = 3)
+            val first = controller.practice.session?.current ?: error("没有会话")
+            val wrongOption = first.orderedOptions().firstOrNull { it.optionId !in first.question.correctOptionIds }
+            if (wrongOption != null) {
+                controller.practice.toggleOption(wrongOption.optionId)
+            } else {
+                controller.practice.updateTextAnswer("一个明显不对的答案")
+            }
+            controller.practice.submit()
+            AppContent(controller)
+        }
+
+        // 手机宽度：标题右侧多了主题胶囊，最容易被挤掉的正是副标题
+        shot("57-home-dark-phone", height = 900, width = 420) {
+            controller.goHome()
+            AppContent(controller)
+        }
+
+        // 历史页：判定色的软底与文字同框出现，深色下最容易糊在一起的一页
+        shot("58-history-dark") {
+            controller.openHistory()
+            AppContent(controller)
+        }
+
+        // 工具箱：按键、圆角方块、等宽数字，是自定义绘制最多的一页
+        shot("59-toolbox-dark") {
+            controller.openToolbox()
+            AppContent(controller)
+        }
+
+        // 不把深色留在全局：同一次运行里后面的用例、以及人工看图都假定浅色
+        controller.theme.set(ThemeMode.LIGHT)
+    }
+
     /** 截图用的选择器：不做对话框，只把字节按建议的文件名写到临时目录。 */
     private class ShotPicker : FilePicker {
         override val isAvailable: Boolean = true
@@ -1267,9 +1331,14 @@ class ScreenshotTest {
         }
     }
 
-    private fun shot(name: String, height: Int = 960, content: @Composable () -> Unit) {
+    private fun shot(
+        name: String,
+        height: Int = 960,
+        width: Int = 1180,
+        content: @Composable () -> Unit,
+    ) {
         val scene = ImageComposeScene(
-            width = 1180,
+            width = width,
             height = height,
             density = Density(1f),
             content = { KtTheme { content() } },
