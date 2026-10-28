@@ -34,10 +34,8 @@ import morefish.knowledge.trainer.application.port.UnsupportedDataVault
 import morefish.knowledge.trainer.application.port.UnavailableFilePicker
 import morefish.knowledge.trainer.application.port.WallClock
 import morefish.knowledge.trainer.application.usecase.AiGenerationOutcome
-import morefish.knowledge.trainer.application.usecase.AiPromptAssembler
 import morefish.knowledge.trainer.application.usecase.ApplyPatchUseCase
 import morefish.knowledge.trainer.application.usecase.BackupExportOutcome
-import morefish.knowledge.trainer.application.usecase.BatchResolve
 import morefish.knowledge.trainer.application.usecase.CreateBackupUseCase
 import morefish.knowledge.trainer.application.usecase.InspectBackupUseCase
 import morefish.knowledge.trainer.application.usecase.RestoreBackupUseCase
@@ -55,9 +53,6 @@ import morefish.knowledge.trainer.application.usecase.SessionLifecycle
 import morefish.knowledge.trainer.application.usecase.StartPracticeSessionUseCase
 import morefish.knowledge.trainer.application.usecase.SubmitAnswerUseCase
 import morefish.knowledge.trainer.application.usecase.SubmitOutcome
-import morefish.knowledge.trainer.domain.ai.AiBatchItem
-import morefish.knowledge.trainer.domain.ai.AiBatchJob
-import morefish.knowledge.trainer.domain.ai.AiBatchState
 import morefish.knowledge.trainer.domain.backup.BackupCryptoIds
 import morefish.knowledge.trainer.domain.backup.BackupPreview
 import morefish.knowledge.trainer.domain.backup.BackupProblem
@@ -108,6 +103,7 @@ import morefish.knowledge.trainer.domain.practice.QuestionKey
 import morefish.knowledge.trainer.domain.practice.StudyStats
 import morefish.knowledge.trainer.presentation.ai.AiController
 import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
+import morefish.knowledge.trainer.presentation.batch.BatchController
 import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
 import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.review.ReviewController
@@ -523,215 +519,33 @@ class AppController(
 
     val storageWarning: String? get() = if (deps.persistentStorage) null else "当前平台为内存存储，重启后题库、进度与历史会丢失"
 
-    // ---- 批量队列（P7 第二块）----
-
-    /** 全部任务，新的在前。 */
-    var aiJobs by mutableStateOf<List<AiBatchJob>>(emptyList())
-        private set
-
-    /** 正在跑的任务 id；null 表示队列没在动。 */
-    var aiBatchRunningId by mutableStateOf<String?>(null)
-        private set
+    // ---- 批量队列 ----
 
     /**
-     * 用户点了暂停 / 取消时的目标状态。
+     * 批量生成队列：建、跑、暂停、取消、删除。
      *
-     * 不让界面直接改任务的 state：任务状态由 run 循环在**请求边界**上收尾。
-     * 打断正在飞的请求同样会扣费，而且会留下一条不知道算成功还是失败的记录。
+     * 它是唯一长时间在后台推进的功能，所以"叫停"这件事必须由它自己说明白：
+     * 用户点暂停只是写下意图，任务状态由执行器在请求边界上收尾。
      */
-    private var aiBatchStopIntent by mutableStateOf<AiBatchState?>(null)
-
-    val aiBatchRunning: Boolean get() = aiBatchRunningId != null
-
-    /** 正在跑的任务；没在跑时取最近一个，让用户回到页面能看见上次的结果。 */
-    val aiBatchCurrent: AiBatchJob?
-        get() = aiBatchRunningId?.let { id -> aiJobs.firstOrNull { it.jobId == id } }
-            ?: aiJobs.firstOrNull()
-
-    /** 看板上显示的任务（可能是刚建的空队列，也可能是历史任务）。 */
-    private var selectedJobId by mutableStateOf<String?>(null)
-
-    val aiBatchSelected: AiBatchJob?
-        get() = aiBatchRunningId?.let { id -> aiJobs.firstOrNull { it.jobId == id } }
-            ?: selectedJobId?.let { id -> aiJobs.firstOrNull { it.jobId == id } }
-            ?: aiJobs.firstOrNull()
+    val batch = BatchController(
+        useCase = runBatch,
+        repository = deps.aiBatchRepository,
+        bankRepository = deps.bankRepository,
+        clock = deps.clock,
+        scope = scope,
+        config = { ai.config },
+        banks = { banks },
+        onJobFinished = { refreshAi() },
+        onNotice = { text, isError -> banner = Banner(text, isError) },
+    )
 
     fun openBatch() {
         screen = Screen.AI_BATCH
-        scope.launch { refreshBatches() }
+        scope.launch { batch.refresh() }
     }
 
     fun closeBatch() {
         screen = Screen.AI
-    }
-
-    fun selectBatch(jobId: String) {
-        selectedJobId = jobId
-    }
-
-    private suspend fun refreshBatches() {
-        aiJobs = deps.aiBatchRepository.jobs()
-    }
-
-    /**
-     * 建队列。**只建不跑** —— 用户先看到"要花多少次"，再决定要不要开始。
-     *
-     * 这一步就把"已有讲解 / 没有译文 / 超出上限"三类排除掉并报数，
-     * 因为"点开始之后才发现大部分早就有了"是最容易让人失去信任的体验。
-     */
-    fun createBatch(bankId: String, locale: String, maxCalls: Int) {
-        val bank = banks.firstOrNull { it.bankId == bankId }
-        if (bank == null) {
-            banner = Banner("这个题库已经不在了", isError = true)
-            return
-        }
-        if (!ai.config.configured) {
-            banner = Banner("先填好接口地址与模型，再排批量任务", isError = true)
-            return
-        }
-        scope.launch {
-            val outcome = runBatch.plan(bank, locale, ai.config.model)
-            if (outcome.items.isEmpty()) {
-                banner = Banner(
-                    when {
-                        outcome.total == 0 -> "这个题库里没有题目"
-                        outcome.skippedNoText > 0 && outcome.alreadyDone == 0 ->
-                            "这个库里没有该语言的题面，没法按这种语言生成"
-                        else -> "这个语言的题都已经有讲解了，不用再生成"
-                    },
-                    isError = true,
-                )
-                return@launch
-            }
-            val now = deps.clock.nowMillis()
-            val job = AiBatchJob(
-                jobId = Ids.prefixed("batch"),
-                bankId = bank.bankId,
-                bankTitle = bank.title,
-                model = ai.config.model,
-                locale = locale,
-                items = outcome.items,
-                state = AiBatchState.QUEUED,
-                cursor = 0,
-                maxCalls = maxCalls.coerceAtLeast(0),
-                note = buildString {
-                    append("共 ").append(outcome.total).append(" 道")
-                    if (outcome.alreadyDone > 0) append("，").append(outcome.alreadyDone).append(" 道已有讲解已排除")
-                    if (outcome.skippedNoText > 0) append("，").append(outcome.skippedNoText).append(" 道没有该语言题面")
-                    if (outcome.truncated > 0) {
-                        append("；本次只排了 ").append(outcome.items.size)
-                        append(" 道，还剩 ").append(outcome.truncated).append(" 道下次再排")
-                    }
-                },
-                createdAtMillis = now,
-                updatedAtMillis = now,
-            )
-            deps.aiBatchRepository.save(job)
-            selectedJobId = job.jobId
-            refreshBatches()
-            banner = Banner("队列已排好：${job.total} 道待生成，点开始才会发请求", isError = false)
-        }
-    }
-
-    /**
-     * 开始 / 继续。
-     *
-     * 继续之前**重扫一遍缓存**：暂停期间用户可能自己单题生成过几道，
-     * 不重扫就会为它们再花一次钱。
-     */
-    fun startBatch(jobId: String? = null) {
-        val target = jobId ?: aiBatchSelected?.jobId
-        val job = aiJobs.firstOrNull { it.jobId == target }
-        if (job == null) {
-            banner = Banner("先排一个队列", isError = true)
-            return
-        }
-        if (aiBatchRunning) return
-        if (aiBatchStopIntent == AiBatchState.CANCELLED && job.state == AiBatchState.CANCELLED) return
-        aiBatchStopIntent = null
-        aiBatchRunningId = job.jobId
-        scope.launch {
-            try {
-                val rescanned = runBatch.scan(job.copy(state = AiBatchState.QUEUED))
-                aiJobs = aiJobs.map { if (it.jobId == rescanned.jobId) rescanned else it }
-                val finished = runBatch.run(
-                    job = rescanned,
-                    resolve = ::resolveBatchItem,
-                    onProgress = { progress ->
-                        aiJobs = aiJobs.map { if (it.jobId == progress.jobId) progress else it }
-                    },
-                    shouldStop = { aiBatchStopIntent },
-                )
-                aiJobs = aiJobs.map { if (it.jobId == finished.jobId) finished else it }
-                refreshAi()
-                refreshBatches()
-                banner = Banner(
-                    when (finished.state) {
-                        AiBatchState.COMPLETED -> "批量完成：${finished.summaryText()}"
-                        AiBatchState.CANCELLED -> "已取消，已生成的讲解都保留着"
-                        else -> finished.note.ifBlank { "已暂停，点继续会接着跑" }
-                    },
-                    isError = finished.state != AiBatchState.COMPLETED,
-                )
-            } finally {
-                aiBatchRunningId = null
-                aiBatchStopIntent = null
-            }
-        }
-    }
-
-    fun pauseBatch() {
-        if (aiBatchRunningId == null) return
-        aiBatchStopIntent = AiBatchState.PAUSED
-        banner = Banner("正在收尾：当前这道题返回后就停", isError = false)
-    }
-
-    fun cancelBatch() {
-        if (aiBatchRunningId == null) {
-            val job = aiBatchSelected ?: return
-            if (!job.isOpen) return
-            scope.launch {
-                deps.aiBatchRepository.save(
-                    job.settled(AiBatchState.CANCELLED, "已取消", deps.clock.nowMillis()),
-                )
-                refreshBatches()
-            }
-            return
-        }
-        aiBatchStopIntent = AiBatchState.CANCELLED
-        banner = Banner("正在取消：当前这道题返回后就停，剩下的不会再发请求", isError = false)
-    }
-
-    fun deleteBatch(jobId: String) {
-        if (aiBatchRunningId == jobId) return
-        scope.launch {
-            deps.aiBatchRepository.delete(jobId)
-            if (selectedJobId == jobId) selectedJobId = null
-            refreshBatches()
-            banner = Banner("任务已删除（已经生成的讲解不会跟着删）", isError = false)
-        }
-    }
-
-    /**
-     * 把队列项还原成一次请求。
-     *
-     * 这里重新从题库里取题，而不是用建队列时的快照：题目改过就用新内容生成，
-     * 缓存键也随之改变。快照只用来判断"题目还在不在"。
-     */
-    private suspend fun resolveBatchItem(item: AiBatchItem): BatchResolve {
-        val bank = deps.bankRepository.list().firstOrNull { it.bankId == item.bankId }
-            ?: return BatchResolve.Missing("题库已删除")
-        val question = bank.questions.firstOrNull { it.questionId == item.questionId }
-            ?: return BatchResolve.Missing("题库里已经没有这道题")
-        val inLocale = question.localized(item.locale, bank.sourceLocale)
-            ?: return BatchResolve.Missing("这道题没有该语言的题面")
-        return BatchResolve.Ready(
-            AiPromptAssembler.inputOf(
-                bankId = bank.bankId,
-                question = inLocale,
-                locale = item.locale,
-            ),
-        )
     }
 
     // ---- 题库更新（.qbpatch）----
@@ -863,7 +677,7 @@ class AppController(
      */
     private suspend fun refreshAi() {
         ai.refresh()
-        aiJobs = deps.aiBatchRepository.jobs()
+        batch.refresh()
     }
 
     /**

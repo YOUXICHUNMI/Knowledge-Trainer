@@ -81,8 +81,8 @@ fun AiScreen(controller: AppController) {
  */
 @Composable
 private fun BatchEntry(controller: AppController) {
-    val pending = controller.aiJobs.count { it.isOpen }
-    val running = controller.aiBatchRunning
+    val pending = controller.batch.jobs.count { it.isOpen }
+    val running = controller.batch.running
     Panel(background = Palette.PanelMuted, borderColor = Palette.AccentLine, padding = 16.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("批量生成", style = MaterialTheme.typography.titleSmall, color = Palette.Ink)
@@ -102,7 +102,7 @@ private fun BatchEntry(controller: AppController) {
         )
         Spacer(Modifier.height(12.dp))
         SecondaryButton(
-            text = if (controller.aiJobs.isEmpty()) "批量生成队列" else "批量生成队列 · ${controller.aiJobs.size} 个任务",
+            text = if (controller.batch.jobs.isEmpty()) "批量生成队列" else "批量生成队列 · ${controller.batch.jobs.size} 个任务",
             onClick = controller::openBatch,
             leading = "▤",
         )

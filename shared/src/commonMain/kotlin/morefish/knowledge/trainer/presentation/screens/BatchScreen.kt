@@ -83,7 +83,7 @@ fun BatchScreen(controller: AppController) {
 
         NewJobPanel(controller)
         Spacer(Modifier.height(18.dp))
-        controller.aiBatchSelected?.let { job ->
+        controller.batch.selected?.let { job ->
             JobPanel(controller, job)
             Spacer(Modifier.height(18.dp))
         }
@@ -192,7 +192,7 @@ private fun NewJobPanel(controller: AppController) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             PrimaryButton(
                 text = "排进队列",
-                onClick = { controller.createBatch(bankId, locale, maxCalls.toIntOrNull() ?: 0) },
+                onClick = { controller.batch.create(bankId, locale, maxCalls.toIntOrNull() ?: 0) },
                 enabled = configured && bank != null,
             )
             GhostButton("返回 AI 讲解", onClick = controller::closeBatch)
@@ -203,7 +203,7 @@ private fun NewJobPanel(controller: AppController) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun JobPanel(controller: AppController, job: AiBatchJob) {
-    val running = controller.aiBatchRunning && job.state == AiBatchState.RUNNING
+    val running = controller.batch.running && job.state == AiBatchState.RUNNING
     var showFailures by remember(job.jobId) { mutableStateOf(false) }
 
     Panel(accent = when (job.state) {
@@ -269,8 +269,8 @@ private fun JobPanel(controller: AppController, job: AiBatchJob) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             when {
                 running -> {
-                    SecondaryButton("暂停", onClick = controller::pauseBatch, leading = "❙❙")
-                    GhostButton("取消", onClick = controller::cancelBatch, color = Palette.Wrong)
+                    SecondaryButton("暂停", onClick = controller.batch::pause, leading = "❙❙")
+                    GhostButton("取消", onClick = controller.batch::cancel, color = Palette.Wrong)
                     Text(
                         "当前这道题返回后才会停（打断请求也会扣费）",
                         style = MaterialTheme.typography.bodySmall,
@@ -281,10 +281,10 @@ private fun JobPanel(controller: AppController, job: AiBatchJob) {
                 job.canResume -> {
                     PrimaryButton(
                         text = if (job.state == AiBatchState.QUEUED) "开始" else "继续",
-                        onClick = { controller.startBatch(job.jobId) },
+                        onClick = { controller.batch.start(job.jobId) },
                     )
                     if (job.isOpen) {
-                        GhostButton("取消", onClick = controller::cancelBatch, color = Palette.Wrong)
+                        GhostButton("取消", onClick = controller.batch::cancel, color = Palette.Wrong)
                     }
                 }
 
@@ -304,7 +304,7 @@ private fun JobPanel(controller: AppController, job: AiBatchJob) {
             }
             Spacer(Modifier.weight(1f))
             if (!running) {
-                GhostButton("删除任务", onClick = { controller.deleteBatch(job.jobId) })
+                GhostButton("删除任务", onClick = { controller.batch.delete(job.jobId) })
             }
         }
 
@@ -361,7 +361,7 @@ private fun FailureRow(item: AiBatchItem) {
 
 @Composable
 private fun JobHistoryPanel(controller: AppController) {
-    val jobs = controller.aiJobs
+    val jobs = controller.batch.jobs
     if (jobs.size <= 1) return
     val now = WallClock.System.nowMillis()
     Panel {
@@ -373,13 +373,13 @@ private fun JobHistoryPanel(controller: AppController) {
                 Divider()
                 Spacer(Modifier.height(8.dp))
             }
-            val selected = controller.aiBatchSelected?.jobId == job.jobId
+            val selected = controller.batch.selected?.jobId == job.jobId
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (selected) Palette.AccentSoft else Palette.Panel)
-                    .clickable { controller.selectBatch(job.jobId) }
+                    .clickable { controller.batch.select(job.jobId) }
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

@@ -817,12 +817,12 @@ class ScreenshotTest {
             "sk-screenshot-demo",
         )
         controller.openBatch()
-        controller.createBatch(bank.bankId, "zh-Hans", 50)
+        controller.batch.create(bank.bankId, "zh-Hans", 50)
         shot("34-batch-queued", height = 880) { AppContent(controller) }
 
-        controller.startBatch()
+        controller.batch.start()
         shot("35-batch-done", height = 880) { AppContent(controller) }
-        val job = controller.aiBatchSelected
+        val job = controller.batch.selected
         println("批量任务状态=${job?.state} 成功=${job?.doneCount} 请求=${job?.callsUsed}")
     }
 

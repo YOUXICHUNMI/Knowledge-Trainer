@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2716 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716） |
+| `AppController.kt` | 2530 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，618 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，619 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -32,7 +32,7 @@ presentation/
   ai/AiController.kt                ✅ 已拆
   editor/QuestionEditorController.kt ✅ 已拆
   review/ReviewController.kt        ✅ 已拆
-  batch/BatchController.kt
+  batch/BatchController.kt          ✅ 已拆
   importing/ImportController.kt
   practice/PracticeController.kt
   graph/GraphController.kt
@@ -69,7 +69,7 @@ presentation/
 | 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | ✅ 已完成 |
 | 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | ✅ 已完成 |
 | 6 | 历史复核 | ~199 | `ReviewScreens` | ✅ 已完成 |
-| 7 | 批量队列 | ~211 | `AiScreen` | 待做 |
+| 7 | 批量队列 | ~211 | `AiScreen` | ✅ 已完成 |
 | 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | 待做 |
 | 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | 待做 |
 | 10 | 个人知识图谱 | ~429 | `GraphScreen` | 待做 |
@@ -222,3 +222,32 @@ presentation/
   生效判定不能丢、徽章不重新冒出来，而备份概况仍报历史文件的条数。
   这条钉的正是"合并只有一处"——它是这次拆分唯一可能悄悄引入的回归。
 - 文件从 2786 行降到 2716 行；617 → 618 用例全绿，行为不变。
+
+## 已完成的第七刀（批量队列）
+
+- 新增 `presentation/batch/BatchController.kt`（258 行）：建队列、跑、暂停、取消、删除，
+  看板上"现在显示哪个任务"，以及把队列项还原成请求的那段解析。
+- 它是全应用唯一**长时间在后台推进**的东西，别的功能都是一次动作一个结果。
+  所以值得单独存在的不是"字段多"，而是状态机（排队 / 运行 / 暂停 / 取消）
+  与那个"叫停意图"之间的配合：用户点暂停只是写下 `stopIntent`，
+  真正的状态由执行器在**请求边界**上收尾 —— 打断正在飞的请求同样会扣费，
+  还会留下一条不知道算成功还是失败的记录。这段配合埋在三千行中间没人能一眼确认它没跑飞。
+- 这一刀有两处"题库"，刻意没有合并：
+  - [create] 用 `banks()` 读取器，也就是用户此刻在界面上看到的那个 ——
+    报的"共 N 道"必须和他看到的数字对得上；
+  - [resolve] 用 `bankRepository.list()` 重读磁盘，因为暂停期间题库可能被改过，
+    按新内容生成、缓存键才会跟着变。
+  两者同名会让人以为可以互换，所以 KDoc 里直接写清"不是同一个东西"。
+- `refreshAi()` 现在是真正的"一次刷新喂两处"：`ai.refresh()` + `batch.refresh()`。
+  上一刀留下的那句注释（"等批量队列也搬出去，这里改成调它的 refresh()"）在这里兑现，
+  调用点没有改动 —— 跑完任务后讲解记录、今日用量、任务列表一起换，才不会出现
+  "用量已经涨了、任务还显示在跑"。
+- 配置从读取器 `config()` 进来，而不是直接拿 `ai` 控制器：子控制器之间不互相引用，
+  由组合根把 `AiConfig` 递过来。模型名要写进任务里，缓存键按它算。
+- 调用方 48 行：`BatchScreen` 11、`AiBatchFlowTest` 31（另加 1 个新用例）、
+  `ScreenshotTest` 3、`AiScreen` 3，全部是 `controller.createBatch` → `controller.batch.create` 这类改名。
+- 新增用例 `questionsGoneFromTheBankAreSkippedInsteadOfBeingRequested`：排队之后题库被换成
+  另一批题，跑起来必须**从磁盘重读**（找不到就跳过并说明"题库里已经没有这道题"），
+  0 次请求、0 条完成。这条钉住 [resolve] 的存在理由——用内存里那份旧题库发请求，
+  就是拿已经不存在的内容在花钱。
+- 文件从 2716 行降到 2530 行；618 → 619 用例全绿，行为不变。

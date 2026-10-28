@@ -97,11 +97,11 @@ class AiBatchFlowTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
 
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
 
         assertEquals(0, http.calls)
-        assertEquals(emptyList(), c.aiJobs, "配置都没有，排出来的队列点开始也只会立刻暂停")
+        assertEquals(emptyList(), c.batch.jobs, "配置都没有，排出来的队列点开始也只会立刻暂停")
         assertTrue(assertNotNull(c.banner).text.contains("接口地址"))
     }
 
@@ -113,10 +113,10 @@ class AiBatchFlowTest {
         testScheduler.advanceUntilIdle()
 
         c.openBatch()
-        c.createBatch("bank-flow", "zh-Hans", 2)
+        c.batch.create("bank-flow", "zh-Hans", 2)
         testScheduler.advanceUntilIdle()
 
-        val job = assertNotNull(c.aiBatchSelected)
+        val job = assertNotNull(c.batch.selected)
         assertEquals(0, http.calls, "排队列只是排，不能悄悄开始花钱")
         assertEquals(AiBatchState.QUEUED, job.state)
         assertEquals(3, job.total)
@@ -130,18 +130,18 @@ class AiBatchFlowTest {
         val c = controller(InMemoryTextStorage(), http, testScheduler)
         c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
 
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
 
-        val job = assertNotNull(c.aiBatchSelected)
+        val job = assertNotNull(c.batch.selected)
         assertEquals(AiBatchState.COMPLETED, job.state)
         assertEquals(3, job.doneCount)
         assertEquals(3, http.calls)
         assertEquals(3, c.ai.records.size, "生成出来的讲解要进缓存，不然下次还要再花钱")
-        assertNull(c.aiBatchRunningId)
+        assertNull(c.batch.runningId)
         assertTrue(assertNotNull(c.banner).text.contains("批量完成"))
     }
 
@@ -153,18 +153,18 @@ class AiBatchFlowTest {
         testScheduler.advanceUntilIdle()
 
         // 先跑一轮把三道都生成出来
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
         assertEquals(3, http.calls)
 
         // 再排一次队列：全都有讲解了，应该直接排不出来，也不该再花一分钱
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
 
         assertEquals(3, http.calls)
-        assertEquals(1, c.aiJobs.size, "没有需要生成的题就不该产生空任务")
+        assertEquals(1, c.batch.jobs.size, "没有需要生成的题就不该产生空任务")
         assertTrue(assertNotNull(c.banner).text.contains("都已经有讲解"))
     }
 
@@ -174,21 +174,21 @@ class AiBatchFlowTest {
         val c = controller(InMemoryTextStorage(), http, testScheduler)
         c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
-        c.createBatch("bank-flow", "zh-Hans", 2)
+        c.batch.create("bank-flow", "zh-Hans", 2)
         testScheduler.advanceUntilIdle()
 
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
-        val paused = assertNotNull(c.aiBatchSelected)
+        val paused = assertNotNull(c.batch.selected)
         assertEquals(AiBatchState.PAUSED, paused.state)
         assertEquals(2, http.calls)
         assertEquals(1, paused.queuedCount)
 
         // 上限已经用掉了，用户放宽上限再继续
-        c.createBatch("bank-flow", "zh-Hans", 5)
+        c.batch.create("bank-flow", "zh-Hans", 5)
         testScheduler.advanceUntilIdle()
         // 新队列只会排剩下的那一 —— 前两道已经有讲解了
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
 
         assertEquals(3, http.calls, "续跑只能补没做过的那一道")
@@ -201,13 +201,13 @@ class AiBatchFlowTest {
         val c = controller(InMemoryTextStorage(), http, testScheduler)
         c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
 
-        c.cancelBatch()
+        c.batch.cancel()
         testScheduler.advanceUntilIdle()
 
-        val job = assertNotNull(c.aiBatchSelected)
+        val job = assertNotNull(c.batch.selected)
         assertEquals(AiBatchState.CANCELLED, job.state)
         assertEquals(0, http.calls, "还没开始就取消，一次请求都不该发")
         assertEquals(3, job.queuedCount, "取消不清空队列 —— 用户可能只是想改天再跑")
@@ -219,13 +219,13 @@ class AiBatchFlowTest {
         val c = controller(InMemoryTextStorage(), http, testScheduler)
         c.ai.saveConfig(configured(budget = AiBudget(maxCallsPerDay = 2)), "sk-test")
         testScheduler.advanceUntilIdle()
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
 
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
 
-        val job = assertNotNull(c.aiBatchSelected)
+        val job = assertNotNull(c.batch.selected)
         assertEquals(2, http.calls)
         assertEquals(AiBatchState.PAUSED, job.state)
         assertEquals(2, job.doneCount)
@@ -240,9 +240,9 @@ class AiBatchFlowTest {
         val c = controller(storage, http, testScheduler)
         c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
-        c.createBatch("bank-flow", "zh-Hans", 2)
+        c.batch.create("bank-flow", "zh-Hans", 2)
         testScheduler.advanceUntilIdle()
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
         assertEquals(2, http.calls)
 
@@ -253,7 +253,7 @@ class AiBatchFlowTest {
         reopened.refresh()
         testScheduler.advanceUntilIdle()
 
-        val restored = assertNotNull(reopened.aiBatchSelected)
+        val restored = assertNotNull(reopened.batch.selected)
         assertEquals(AiBatchState.PAUSED, restored.state)
         assertEquals(2, restored.doneCount)
         assertEquals(1, restored.queuedCount)
@@ -266,16 +266,53 @@ class AiBatchFlowTest {
         val c = controller(InMemoryTextStorage(), http, testScheduler)
         c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
-        c.createBatch("bank-flow", "zh-Hans", 0)
+        c.batch.create("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
-        c.startBatch()
+        c.batch.start()
         testScheduler.advanceUntilIdle()
-        val jobId = assertNotNull(c.aiBatchSelected).jobId
+        val jobId = assertNotNull(c.batch.selected).jobId
 
-        c.deleteBatch(jobId)
+        c.batch.delete(jobId)
         testScheduler.advanceUntilIdle()
 
-        assertEquals(emptyList(), c.aiJobs)
+        assertEquals(emptyList(), c.batch.jobs)
         assertEquals(3, c.ai.records.size, "删任务是删待办，不是删花过钱买来的内容")
+    }
+
+    @Test
+    fun questionsGoneFromTheBankAreSkippedInsteadOfBeingRequested() = runTest {
+        val http = CountingHttp()
+        val storage = InMemoryTextStorage()
+        val deps = AppDependencies(storage, clock, aiHttpClient = http)
+        deps.bankRepository.save(bank())
+        val c = AppController(deps, CoroutineScope(UnconfinedTestDispatcher(testScheduler)))
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+        c.ai.saveConfig(configured(), "sk-test")
+        testScheduler.advanceUntilIdle()
+
+        c.batch.create("bank-flow", "zh-Hans", 0)
+        testScheduler.advanceUntilIdle()
+
+        // 排好队之后题库被换成了另一批题（作者重新导入、或题目被删）。
+        // 队列里存的是旧的 questionId，此刻已经找不到对应题目了。
+        val replaced = bank().let { original ->
+            original.copy(questions = original.questions.map { it.copy(questionId = it.questionId + "-new") })
+        }
+        deps.bankRepository.save(replaced)
+
+        c.batch.start()
+        testScheduler.advanceUntilIdle()
+
+        // 跑的时候必须从磁盘重读题库：内存里那份还是旧的，照着它发请求就是拿
+        // 已经不存在的内容在花钱。找不到题目要记下原因跳过，而不是笼统标成失败。
+        val job = assertNotNull(c.batch.selected)
+        assertEquals(0, http.calls, "题目不在了就不该发请求")
+        assertTrue(job.items.all { it.state == AiBatchItemState.SKIPPED }, "实际：${job.items.map { it.state }}")
+        assertTrue(
+            job.items.first().note.contains("没有这道题"),
+            "跳过要说清原因，实际：${job.items.first().note}",
+        )
+        assertEquals(0, job.doneCount)
     }
 }
