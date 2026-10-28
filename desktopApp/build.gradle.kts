@@ -24,7 +24,12 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Dmg)
             packageName = "KnowledgeTrainer"
             packageVersion = "1.0.0"
-            description = "离线优先的知识训练工具：导入题库、做题、离线判题、错题复习"
+            // 必须是 ASCII，不能写中文。MSI 的数据库码页跟着**构建机的 locale** 走：
+            // 本机 zh-CN 是 936，中文装得下；en-US 的机器是 1252，中文装不下，
+            // light.exe 直接退出 311（LGHT0311），jpackage 只说 "Exit code: 1"。
+            // 这条在 2026-10-28 的 GitHub runner 上真实踩过（见 STATUS-P10 第 19 节）。
+            // 中文说明留在应用内的「关于」与 README 里，安装包属性用英文。
+            description = "Offline-first knowledge trainer: import banks, practice, grade offline, review mistakes"
             vendor = "morefish"
             copyright = "© 2026 morefish"
             // 图标由 tools/release/make_icons.py 生成，改配色改尺寸只改那一处
