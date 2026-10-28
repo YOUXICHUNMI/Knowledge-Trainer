@@ -1309,6 +1309,64 @@ class ScreenshotTest {
             AppContent(controller)
         }
 
+        // 剩下这些页没有逐张人工核对过，所以一次拍全 —— 拍出来才能看，
+        // 而"靠令牌保证"这句话只有真的看过了才敢说。
+        shot("60-import-dark") {
+            controller.openImport(SampleBank.json)
+            AppContent(controller)
+        }
+
+        shot("61-question-editor-dark") {
+            controller.openQuestionEditor(controller.banks.single().bankId)
+            AppContent(controller)
+        }
+
+        shot("62-notes-dark") {
+            controller.openNotes()
+            AppContent(controller)
+        }
+
+        shot("63-note-editor-dark") {
+            controller.openNewNote()
+            AppContent(controller)
+        }
+
+        shot("64-graph-dark", height = 1180) {
+            controller.openGraph()
+            AppContent(controller)
+        }
+
+        shot("65-extensions-dark", height = 1180) {
+            controller.openExtensions()
+            AppContent(controller)
+        }
+
+        shot("66-ai-dark", height = 1320) {
+            controller.openAi()
+            AppContent(controller)
+        }
+
+        shot("67-backup-dark", height = 884) {
+            controller.openBackup()
+            AppContent(controller)
+        }
+
+        shot("68-wrong-dark") {
+            controller.openWrong()
+            AppContent(controller)
+        }
+
+        shot("69-summary-dark") {
+            controller.startPractice(imported, questionCount = 3)
+            controller.finish()
+            AppContent(controller)
+        }
+
+        shot("70-standard-dark", height = 1180) {
+            controller.openStandard(Screen.STANDARD, Screen.IMPORT)
+            AppContent(controller)
+        }
+
         // 不把深色留在全局：同一次运行里后面的用例、以及人工看图都假定浅色
         controller.theme.set(ThemeMode.LIGHT)
     }

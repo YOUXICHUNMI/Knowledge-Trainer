@@ -38,6 +38,9 @@ class PaletteContrastTest {
         // 次级文字（说明、副标题）
         Reading("muted/panel", s.muted, s.panel, 4.5f),
         Reading("muted/canvas", s.muted, s.canvas, 4.5f),
+        // 次级色同时是"控件自己的边"：没有字的方块（勾选、色块）全靠它成形，
+        // 所以它压在自己的浅底上也得够亮 —— 分隔线色在这里只有 1.3:1。
+        Reading("muted/panelMuted", s.muted, s.panelMuted, 4.5f),
         // 三级提示（计数、脚注）：装饰性，但也不许低到看不清
         Reading("faint/panel", s.faint, s.panel, 2.5f),
         // 代码块是另一块底，正文与次级各自再过一遍

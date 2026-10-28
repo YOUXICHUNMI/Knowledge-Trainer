@@ -298,7 +298,11 @@ private fun CorrectToggle(active: Boolean, onClick: () -> Unit) {
             .size(32.dp)
             .clip(shape)
             .background(if (active) Palette.CorrectSoft else Palette.PanelMuted)
-            .border(1.dp, if (active) Palette.Correct else Palette.PanelBorder, shape)
+            // 这个方块里面没有字，整块唯一的形状就是这条边，所以不能用分隔线的边：
+            // 分隔线（#332E24）压在自己那块底上只有 1.26:1，深色下等于没有方块 ——
+            // 而它是"标出正确答案"的唯一入口。用 Muted（浅 5.2 / 深 6.9），
+            // 与 Material 自己的未选中勾选框一致。
+            .border(1.dp, if (active) Palette.Correct else Palette.Muted, shape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
