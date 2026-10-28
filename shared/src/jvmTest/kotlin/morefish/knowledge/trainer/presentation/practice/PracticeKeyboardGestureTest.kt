@@ -9,16 +9,14 @@ import androidx.compose.ui.unit.Density
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import morefish.knowledge.trainer.application.port.ChoiceMapping
 import morefish.knowledge.trainer.application.port.InMemoryTextStorage
-import morefish.knowledge.trainer.application.usecase.ImportBankUseCase
 import morefish.knowledge.trainer.domain.model.GradingSpec
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
+import morefish.knowledge.trainer.domain.model.QuestionOption
 import morefish.knowledge.trainer.domain.model.QuestionType
 import morefish.knowledge.trainer.presentation.AppController
 import morefish.knowledge.trainer.presentation.AppDependencies
-import morefish.knowledge.trainer.presentation.SampleBank
 import morefish.knowledge.trainer.presentation.Screen
 import morefish.knowledge.trainer.presentation.screens.PracticeScreen
 import morefish.knowledge.trainer.presentation.theme.KtTheme
@@ -43,10 +41,10 @@ class PracticeKeyboardGestureTest {
 
     @Test
     fun aLetterThenEnterAnswersAndMovesOn() {
-        val controller = practiceOnSampleBank(questionCount = 1)
+        val controller = practiceOnChoiceBank(questionCount = 1)
         val scene = sceneFor(controller)
 
-        // 抽题是随机的（单选 / 判断都有可能），所以只断言"这题能用字母键选"
+        // 题库里只有单选，但选项会打乱 —— 字母键指的是屏幕上第几个，不是原题的顺序
         val options = controller.practice.session!!.current!!.orderedOptions()
         assertTrue(options.size >= 2, "这场应当落在有多个选项的题型上，实际 ${controller.practice.currentQuestion?.type}")
         assertTrue(scene.press(Key.A), "字母键应当被练习页吃掉")
@@ -65,7 +63,7 @@ class PracticeKeyboardGestureTest {
 
     @Test
     fun aDigitKeyPicksTheSameOptionAsItsLetter() {
-        val controller = practiceOnSampleBank(questionCount = 1)
+        val controller = practiceOnChoiceBank(questionCount = 1)
         val scene = sceneFor(controller)
 
         assertTrue(scene.press(Key.Two))
@@ -106,14 +104,41 @@ class PracticeKeyboardGestureTest {
     private fun ImageComposeScene.press(key: Key): Boolean =
         sendKeyEvent(KeyEvent(key = key, type = KeyEventType.KeyDown))
 
-    private fun practiceOnSampleBank(questionCount: Int): AppController {
+    /**
+     * 三道单选，确定性的题库。
+     *
+     * 原来是从 `SampleBank` 里抽（里面混着简答题），抽到简答时"按 A 选中第一个选项"这件事
+     * 根本无从谈起 —— 跑全量时偶发红过一次，报的是"这题应当有多个选项，实际 SHORT_ANSWER"。
+     * 抽题是随机的，测试不能把对错押在运气上。
+     */
+    private fun practiceOnChoiceBank(questionCount: Int = 1): AppController {
         val storage = InMemoryTextStorage()
         val deps = AppDependencies(storage)
-        val controller = AppController(deps, CoroutineScope(Dispatchers.Unconfined))
         runBlocking {
-            ImportBankUseCase(deps.bankRepository, clock = deps.clock)
-                .import(SampleBank.json, ChoiceMapping.AUTO, "示例", "keyboard")
+            deps.bankRepository.save(
+                QuestionBank(
+                    bankId = "choice-bank",
+                    title = "选择题",
+                    sourceLocale = "zh",
+                    questions = (1..3).map { i ->
+                        Question(
+                            questionId = "choice-$i",
+                            type = QuestionType.SINGLE_CHOICE,
+                            promptMarkdown = "第 $i 题：选甲",
+                            options = listOf(
+                                QuestionOption("a", "甲"),
+                                QuestionOption("b", "乙"),
+                                QuestionOption("c", "丙"),
+                            ),
+                            correctOptionIds = setOf("a"),
+                        )
+                    },
+                    importedAtMillis = 0L,
+                    sourceLabel = "test",
+                ),
+            )
         }
+        val controller = AppController(deps, CoroutineScope(Dispatchers.Unconfined))
         controller.refresh()
         controller.startPractice(controller.banks.single(), questionCount = questionCount)
         return controller

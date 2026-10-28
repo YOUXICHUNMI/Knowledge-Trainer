@@ -1164,18 +1164,21 @@ class ScreenshotTest {
         root.deleteRecursively()
     }
 
+
     /**
-     * 备份与迁移页的三张图：总览 / 刚导出 / 恢复预览（外加一张被拒绝的）。
+     * 备份页的夹具：真实临时目录 + 一个题库 + 一条历史。
      *
-     * 用真实临时目录 + [DirectoryVault]，因为这一页的文案全都挂在真实数字上
-     * （几个题库、几条历史、多大、多少文件）—— 假数据截出来的图没有核对价值。
+     * 这一页的每个数字（几个题库、几条历史、多大、多少文件）都来自真实目录，
+     * 所以浅色与深色共用同一份夹具 —— 否则两张图上的数字对不上，看图的人会先怀疑自己。
      */
-    @Test
-    fun renderBackup() {
-        if (System.getenv("KT_SHOTS") != "1") {
-            println("跳过 ScreenshotTest：设置 KT_SHOTS=1 才会渲染")
-            return
-        }
+    private class BackupFixture(
+        val root: File,
+        val picker: ShotPicker,
+        val deps: AppDependencies,
+        val controller: AppController,
+    )
+
+    private fun backupFixture(): BackupFixture {
         val root = Files.createTempDirectory("kt-shot-backup").toFile()
         val picker = ShotPicker()
         val deps = AppDependencies(
@@ -1212,6 +1215,26 @@ class ScreenshotTest {
         }
         controller.refresh()
         controller.openBackup()
+        return BackupFixture(root, picker, deps, controller)
+    }
+
+    /**
+     * 备份与迁移页的三张图：总览 / 刚导出 / 恢复预览（外加一张被拒绝的）。
+     *
+     * 用真实临时目录 + [DirectoryVault]，因为这一页的文案全都挂在真实数字上
+     * （几个题库、几条历史、多大、多少文件）—— 假数据截出来的图没有核对价值。
+     */
+    @Test
+    fun renderBackup() {
+        if (System.getenv("KT_SHOTS") != "1") {
+            println("跳过 ScreenshotTest：设置 KT_SHOTS=1 才会渲染")
+            return
+        }
+        val fixture = backupFixture()
+        val deps = fixture.deps
+        val picker = fixture.picker
+        val controller = fixture.controller
+        val root = fixture.root
         shot("45-backup-overview", height = 884) { AppContent(controller) }
 
         // ---- 加密：开关打开、输两次口令、勾确认之后按钮才是可点的
@@ -1248,6 +1271,47 @@ class ScreenshotTest {
         controller.intakeBackupBytes("坏掉的备份.qbk", bytes.copyOf(bytes.size - 64))
         shot("48-backup-rejected", height = 1166) { AppContent(controller) }
         root.deleteRecursively()
+    }
+
+    /**
+     * 深色下的备份主界面（总览 / 刚导出 / 加密口令 / 恢复预览）。
+     *
+     * 上一轮没拍这里：深色用的是内存存储，只拍到「这个平台没有可备份的数据」那一屏。
+     * 而这一页的每一句文案都挂在真实目录的数字上（几个题库、多少文件、多大），
+     * 换成假数据拍出来没有核对价值 —— 所以复用 [backupFixture] 的真实临时目录。
+     */
+    @Test
+    fun renderBackupDark() {
+        if (System.getenv("KT_SHOTS") != "1") {
+            println("跳过 renderBackupDark：设置 KT_SHOTS=1 才会渲染")
+            return
+        }
+        val fixture = backupFixture()
+        val controller = fixture.controller
+        controller.theme.set(ThemeMode.DARK)
+
+        shot("71-backup-overview-dark", height = 884) { AppContent(controller) }
+
+        // 加密开关打开、两个口令框填好、勾了确认 —— 这三件在深色下最容易糊成一片
+        controller.backup.toggleEncrypt()
+        controller.backup.updateExportPassphrase("备份口令-海豚毛线九月")
+        controller.backup.updateExportConfirm("备份口令-海豚毛线九月")
+        controller.backup.updateExportAck(true)
+        shot("72-backup-encrypt-dark", height = 1140) { AppContent(controller) }
+
+        // 关掉开关（顺带清口令），导出一次不加密的：恢复预览才挤得进画面
+        controller.backup.toggleEncrypt()
+        controller.dismissBanner()
+        controller.exportBackup()
+        shot("73-backup-exported-dark", height = 1082) { AppContent(controller) }
+
+        val saved = fixture.picker.saved ?: error("导出没有落盘")
+        controller.intakeBackupBytes(saved.name, saved.readBytes())
+        shot("74-backup-restore-dark", height = 1286) { AppContent(controller) }
+
+        // 不把深色留在全局：后面可能还有别的用例借同一进程跑
+        controller.theme.set(ThemeMode.LIGHT)
+        fixture.root.deleteRecursively()
     }
 
     /**
