@@ -96,7 +96,7 @@ fun HomeScreen(controller: AppController) {
 
         StaggeredAppear(0) {
             HeroCard(
-                streak = controller.calendar.currentStreak,
+                streak = controller.historyView.calendar.currentStreak,
                 accuracy = accuracy,
                 attemptCount = attempts.size,
                 hasBank = controller.banks.isNotEmpty(),
@@ -142,10 +142,10 @@ fun HomeScreen(controller: AppController) {
                 )
                 StatTile(
                     label = "错题",
-                    value = controller.wrongEntries.size,
+                    value = controller.historyView.wrongEntries.size,
                     modifier = Modifier.weight(1f),
                     hint = "待复习",
-                    accent = if (controller.wrongEntries.isEmpty()) Palette.Ink else Palette.Wrong,
+                    accent = if (controller.historyView.wrongEntries.isEmpty()) Palette.Ink else Palette.Wrong,
                 )
             }
         }
@@ -199,7 +199,7 @@ fun HomeScreen(controller: AppController) {
         }
 
         Spacer(Modifier.height(22.dp))
-        StaggeredAppear(4) { StudyCalendarPanel(controller.calendar) }
+        StaggeredAppear(4) { StudyCalendarPanel(controller.historyView.calendar) }
 
         Spacer(Modifier.height(24.dp))
         StaggeredAppear(5) {

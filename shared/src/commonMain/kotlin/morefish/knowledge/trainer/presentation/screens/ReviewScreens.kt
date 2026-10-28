@@ -28,7 +28,7 @@ import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.WrongQuestionEntry
 import morefish.knowledge.trainer.presentation.AppController
 import morefish.knowledge.trainer.domain.i18n.localeLabel
-import morefish.knowledge.trainer.presentation.HistoryRange
+import morefish.knowledge.trainer.presentation.history.HistoryRange
 import morefish.knowledge.trainer.presentation.richtext.Markdown
 import morefish.knowledge.trainer.presentation.richtext.RichText
 import morefish.knowledge.trainer.presentation.theme.Palette
@@ -50,7 +50,7 @@ import morefish.knowledge.trainer.presentation.ui.verdictSoft
 @Composable
 fun HistoryScreen(controller: AppController) {
     val now = WallClock.System.nowMillis()
-    val attempts = controller.filteredHistory
+    val attempts = controller.historyView.filtered
     val shown = attempts.take(MAX_RENDERED_ATTEMPTS)
 
     ScreenScaffold(
@@ -63,36 +63,36 @@ fun HistoryScreen(controller: AppController) {
             FilterRow(
                 label = "日期",
                 values = HistoryRange.entries,
-                selected = controller.historyRange,
+                selected = controller.historyView.range,
                 labelOf = { it.label },
-                onSelect = controller::selectHistoryRange,
+                onSelect = controller.historyView::selectRange,
             )
             Spacer(Modifier.height(12.dp))
             FilterRow(
                 label = "题库",
                 values = listOf<String?>(null) + controller.banks.map { it.bankId },
-                selected = controller.historyBankFilter,
+                selected = controller.historyView.bankFilter,
                 labelOf = { id -> if (id == null) "全部" else controller.bankTitle(id) },
-                onSelect = controller::selectHistoryBank,
+                onSelect = controller.historyView::selectBank,
             )
             Spacer(Modifier.height(12.dp))
             FilterRow(
                 label = "判定",
                 values = listOf<Verdict?>(null) + Verdict.entries,
-                selected = controller.historyVerdictFilter,
+                selected = controller.historyView.verdictFilter,
                 labelOf = { it?.label ?: "全部" },
-                onSelect = controller::selectHistoryVerdict,
+                onSelect = controller.historyView::selectVerdict,
             )
             // 只有真的存在多种语言的记录时才出现：单一语言时这一行是纯噪音
-            val locales = controller.historyLocales
+            val locales = controller.historyView.locales
             if (locales.size > 1) {
                 Spacer(Modifier.height(12.dp))
                 FilterRow(
                     label = "语言",
                     values = listOf<String?>(null) + locales,
-                    selected = controller.historyLocaleFilter,
+                    selected = controller.historyView.localeFilter,
                     labelOf = { if (it == null) "全部" else localeLabel(it) },
-                    onSelect = controller::selectHistoryLocale,
+                    onSelect = controller.historyView::selectLocale,
                 )
             }
         }
@@ -232,7 +232,7 @@ private fun AttemptCard(attempt: AttemptRecord, controller: AppController, now: 
 
 @Composable
 fun WrongQuestionsScreen(controller: AppController) {
-    val entries = controller.wrongEntries
+    val entries = controller.historyView.wrongEntries
 
     ScreenScaffold(
         title = "错题本",

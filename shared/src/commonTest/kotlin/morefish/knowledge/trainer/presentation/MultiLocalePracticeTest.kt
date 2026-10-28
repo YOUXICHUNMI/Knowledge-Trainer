@@ -131,7 +131,7 @@ class MultiLocalePracticeTest {
         testScheduler.advanceUntilIdle()
 
         assertEquals("en", c.history.last().locale)
-        assertEquals(listOf("en"), c.historyLocales)
+        assertEquals(listOf("en"), c.historyView.locales)
     }
 
     @Test
@@ -186,18 +186,18 @@ class MultiLocalePracticeTest {
         c.submit()
         testScheduler.advanceUntilIdle()
 
-        assertEquals(listOf("en", "zh-Hans"), c.historyLocales)
-        assertEquals(2, c.filteredHistory.size)
+        assertEquals(listOf("en", "zh-Hans"), c.historyView.locales)
+        assertEquals(2, c.historyView.filtered.size)
 
-        c.selectHistoryLocale("en")
-        assertEquals(1, c.filteredHistory.size)
-        assertEquals("en", c.filteredHistory.single().locale)
+        c.historyView.selectLocale("en")
+        assertEquals(1, c.historyView.filtered.size)
+        assertEquals("en", c.historyView.filtered.single().locale)
 
-        c.selectHistoryLocale("zh-Hans")
-        assertEquals(1, c.filteredHistory.size)
+        c.historyView.selectLocale("zh-Hans")
+        assertEquals(1, c.historyView.filtered.size)
 
-        c.selectHistoryLocale(null)
-        assertEquals(2, c.filteredHistory.size)
+        c.historyView.selectLocale(null)
+        assertEquals(2, c.historyView.filtered.size)
     }
 
     @Test

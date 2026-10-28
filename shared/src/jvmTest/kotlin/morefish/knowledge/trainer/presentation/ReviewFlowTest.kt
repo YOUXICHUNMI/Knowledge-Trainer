@@ -156,7 +156,7 @@ class ReviewFlowTest {
         assertEquals(Verdict.CORRECT, mark.from)
         assertEquals(Verdict.INCORRECT, mark.to)
         assertTrue(mark.changed)
-        assertEquals(1, c.wrongEntries.size, "改判为错误，错题本应该跟着出现这道题")
+        assertEquals(1, c.historyView.wrongEntries.size, "改判为错误，错题本应该跟着出现这道题")
         assertEquals(0, c.reviewPending, "处理过就不再算待复核")
 
         // 原始历史文件那一行仍然是当时的判定
@@ -181,7 +181,7 @@ class ReviewFlowTest {
         val mark = assertNotNull(merged.review)
         assertEquals(ReviewDecision.RESTORE, mark.decision)
         assertTrue(!mark.changed)
-        assertTrue(c.wrongEntries.isEmpty())
+        assertTrue(c.historyView.wrongEntries.isEmpty())
         assertTrue(assertNotNull(c.reviewPlan).isEmpty, "表态过的记录要从列表里消失")
         assertEquals(0, c.reviewPending)
 

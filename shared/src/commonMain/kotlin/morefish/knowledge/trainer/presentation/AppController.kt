@@ -108,7 +108,6 @@ import morefish.knowledge.trainer.domain.model.ValidationIssue
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.validate
 import morefish.knowledge.trainer.domain.model.WrongQuestionEntry
-import morefish.knowledge.trainer.domain.model.WrongQuestions
 import morefish.knowledge.trainer.domain.model.countForBank
 import morefish.knowledge.trainer.domain.model.forQuestion
 import morefish.knowledge.trainer.domain.practice.AttemptReview
@@ -121,8 +120,8 @@ import morefish.knowledge.trainer.domain.patch.PatchChangeKind
 import morefish.knowledge.trainer.domain.practice.LocalDates
 import morefish.knowledge.trainer.domain.practice.PracticeScope
 import morefish.knowledge.trainer.domain.practice.QuestionKey
-import morefish.knowledge.trainer.domain.practice.StudyCalendar
 import morefish.knowledge.trainer.domain.practice.StudyStats
+import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxController
 import morefish.knowledge.trainer.infrastructure.ai.OpenAiCompatibleProvider
 import morefish.knowledge.trainer.application.port.ChoiceMapping
@@ -284,20 +283,11 @@ data class BackupIntake(
     override fun hashCode(): Int = bytes.contentHashCode() * 31 + name.hashCode()
 }
 
-/** 工具箱的两个面板。 */
 /** 图谱编辑器里正在为哪一端搜题。 */
 enum class GraphPickSide { NONE, SOURCE, TARGET }
 
 /** 编辑器里展示一端题目所需的最小信息。 */
 data class GraphCard(val bankTitle: String, val promptMarkdown: String, val contentRevision: Int?)
-
-/** 历史页的日期范围筛选。null 表示全部。 */
-enum class HistoryRange(val days: Int?, val label: String) {
-    TODAY(1, "今天"),
-    WEEK(7, "近 7 天"),
-    MONTH(30, "近 30 天"),
-    ALL(null, "全部"),
-}
 
 /**
  * 单屏状态机。刻意不做"千行 ViewModel"：这里只负责串联用例与 UI 状态，
@@ -365,6 +355,15 @@ class AppController(
 
     var history by mutableStateOf<List<AttemptRecord>>(emptyList())
         private set
+
+    /**
+     * 历史页的筛选与派生视图（日历、错题本）。
+     *
+     * 名字带 `View` 是为了不跟上面那份原始列表撞车：`history` 是**数据**（共享内核，
+     * 统计、会话恢复、复核都要用），`historyView` 是**看它的方式**。
+     * 它拿的是 `history` 的读取器而不是快照，所以不会出现两份历史。
+     */
+    val historyView = HistoryController(clock = deps.clock) { history }
 
     var studyStats by mutableStateOf(StudyStats.Empty)
         private set
@@ -470,22 +469,6 @@ class AppController(
     /** 打开设置页时算一次：题目校验是 O(题目数)，不能每一帧重算。 */
     private var setupTypeCounts by mutableStateOf<Map<QuestionType, Int>>(emptyMap())
     private var setupScopeCounts by mutableStateOf<Map<PracticeScope, Int>>(emptyMap())
-
-    // ---- 复习与历史状态 ----
-    var wrongEntries by mutableStateOf<List<WrongQuestionEntry>>(emptyList())
-        private set
-    var historyRange by mutableStateOf(HistoryRange.WEEK)
-        private set
-    var historyBankFilter by mutableStateOf<String?>(null)
-        private set
-    var historyVerdictFilter by mutableStateOf<Verdict?>(null)
-        private set
-
-    /** 历史按语言筛选。null = 全部语言（默认不隐藏记录，隐藏会让人以为记录丢了）。 */
-    var historyLocaleFilter by mutableStateOf<String?>(null)
-        private set
-    var calendar by mutableStateOf(StudyCalendar.build(emptyList(), deps.clock.nowMillis()))
-        private set
 
     // ---- 笔记 ----
     var notes by mutableStateOf<List<Note>>(emptyList())
@@ -844,8 +827,8 @@ class AppController(
         studyStats = StudyStats.derive(history)
         // 按语言缓存的那份统计作废：否则设置页会拿复核前的"未练习"数去抽题
         setupStatsLocale = ""
-        wrongEntries = WrongQuestions.derive(history)
-        calendar = StudyCalendar.build(history, deps.clock.nowMillis())
+        // 复核生效后错题本与日历都要重算：它们的输入是"已合并复核结果的历史"
+        historyView.update(history)
     }
 
     /**
@@ -1023,7 +1006,6 @@ class AppController(
         studyStats = StudyStats.derive(history)
         // 历史变了，按语言缓存的那份统计就作废：否则设置页会拿旧的"未练习"数去抽题
         setupStatsLocale = ""
-        wrongEntries = WrongQuestions.derive(history)
         favorites = deps.favoriteRepository.all()
         notes = deps.noteRepository.all()
         // 扩展包先于图谱读：图谱视图要从"生效中的包"合并关系
@@ -1049,7 +1031,8 @@ class AppController(
                 merged
             }
         }
-        calendar = StudyCalendar.build(history, deps.clock.nowMillis())
+        // 日历与错题本按全量历史重算（不受历史页筛选影响）
+        historyView.update(history)
         refreshAi()
         val warning = deps.bankRepository.loadWarnings.firstOrNull()
             ?: deps.sessionRepository.loadWarnings.firstOrNull()
@@ -3088,48 +3071,6 @@ class AppController(
             )
         }
     }
-
-    // ---- 历史与日历 ----
-
-    fun selectHistoryRange(range: HistoryRange) {
-        historyRange = range
-    }
-
-    fun selectHistoryBank(bankId: String?) {
-        historyBankFilter = bankId
-    }
-
-    fun selectHistoryVerdict(verdict: Verdict?) {
-        historyVerdictFilter = verdict
-    }
-
-    /** 历史里出现过的语言（按标签排序）。只出现一种语言时不显示筛选行。 */
-    val historyLocales: List<String>
-        get() = history.map { it.locale }.filter { it.isNotBlank() }
-            .map { LocaleTag.parse(it)?.value ?: it }
-            .distinct()
-            .sorted()
-
-    fun selectHistoryLocale(locale: String?) {
-        historyLocaleFilter = locale
-    }
-
-    val filteredHistory: List<AttemptRecord>
-        get() {
-            val now = deps.clock.nowMillis()
-            val cutoff = historyRange.days?.let { now - it * 86_400_000L }
-            return history
-                .asSequence()
-                .filter { cutoff == null || it.submittedAtMillis >= cutoff }
-                .filter { historyBankFilter == null || it.bankId == historyBankFilter }
-                .filter { historyVerdictFilter == null || it.verdict == historyVerdictFilter }
-                .filter {
-                    historyLocaleFilter == null ||
-                        (LocaleTag.parse(it.locale)?.value ?: it.locale) == historyLocaleFilter
-                }
-                .sortedByDescending { it.submittedAtMillis }
-                .toList()
-        }
 
     private fun currentDraft(): PracticeDraft =
         PracticeDraft(selectedOptionIds, textAnswer, orderedOptionIds)

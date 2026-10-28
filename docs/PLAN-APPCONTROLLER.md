@@ -7,7 +7,7 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 3219 行（拆工具箱前 3371） |
+| `AppController.kt` | 3160 行（拆工具箱前 3371，拆历史前 3219） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
 | 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，608 个 JVM 用例 |
@@ -27,7 +27,7 @@
 presentation/
   AppController.kt        组合根 + 共享内核（读模型 / 导航 / 刷新编排）
   toolbox/ToolboxController.kt      ✅ 已拆
-  history/HistoryController.kt
+  history/HistoryController.kt      ✅ 已拆
   setup/PracticeSetupController.kt
   ai/AiController.kt
   editor/QuestionEditorController.kt
@@ -64,7 +64,7 @@ presentation/
 | # | 关注点 | 现有行数 | 主要调用方 | 状态 |
 |---|---|---:|---|---|
 | 1 | 工具箱（计算器 + 单位换算） | ~150 | `ToolboxScreen` | ✅ 已完成 |
-| 2 | 历史与日历 | ~82 | `HistoryScreen` | 待做 |
+| 2 | 历史与日历 | ~82 | `HistoryScreen` | ✅ 已完成 |
 | 3 | 练习设置 | ~86 | `PracticeSetupScreen` | 待做 |
 | 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | 待做 |
 | 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | 待做 |
@@ -98,3 +98,27 @@ presentation/
 
 为什么先拿它开刀：它与题目、题库、练习会话**零耦合**，不写持久化，也不联网，
 是唯一能证明"拆分不需要改动行为"的样板。
+
+## 已完成的第二刀（历史与日历）
+
+- 新增 `presentation/history/HistoryController.kt`（131 行）：四个筛选条件
+  （日期范围 / 题库 / 判定 / 语言）与两块派生视图（学习日历、错题本），
+  连同只服务于历史页的 `HistoryRange` 一起搬进新包。
+- 与第一刀不同，它有一个外部依赖：**历史列表本身**。这里没有把列表复制一份，
+  而是从构造参数接收 `() -> List<AttemptRecord>` 读取器 —— 复制一份快照，
+  就会出现"组合根换了历史、历史页还是旧的"两份真相。
+- 两份派生视图反过来**必须显式刷新**：`update(history)` 由组合根在
+  `loadAll` / `reloadHistory` 之后调用。它们要遍历全部记录，不能做成 getter
+  每帧重算；而"什么时候该重算"只有组合根知道，所以用参数把这件事摆在调用点上。
+- 命名上刻意叫 `historyView` 而不是 `history`：后者是共享内核里的**数据**
+  （统计、会话恢复、复核都要用），前者是**看它的方式**。同名会逼着把原始列表
+  改个更含糊的名字。
+- 新增 `HistoryControllerTest`（5 例），钉住两条容易改坏的规则：
+  筛选是**叠加**的；日历与错题本**不跟着筛选走**（切到"只看错题"不该让那天
+  的学习记录从日历上消失）。
+- 调用方改动：`HistoryScreen` 11 处、`HomeScreen` 4 处、`MultiLocalePracticeTest` 10 处、
+  `ReviewFlowTest` 2 处、`ScreenshotTest` 1 处。
+- 文件从 3219 行降到 3160 行；608 → 613 用例全绿，行为不变。
+
+顺带删掉了一处遗留：`/** 工具箱的两个面板。 */` 这行 KDoc 在第一刀之后失去了宿主，
+挂在了 `GraphPickSide` 上面，读起来像"图谱编辑器有两个面板"。

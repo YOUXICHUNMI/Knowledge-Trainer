@@ -193,7 +193,7 @@ class ScreenshotTest {
             AppContent(controller)
         }
         shot("11-practice-figure") {
-            controller.startWrongReview(controller.wrongEntries)
+            controller.startWrongReview(controller.historyView.wrongEntries)
             AppContent(controller)
         }
         println("附图题 ${figQuestion.questionId} assets=${figQuestion.assetIds}")
