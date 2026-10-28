@@ -355,4 +355,29 @@ class PersistenceTest {
         assertEquals(listOf("q1", "q2"), reopened.questions.map { it.questionId })
     }
 
+    /**
+     * 移除题库：目录条目与题目文件一起消失，别的库一个字节不动。
+     *
+     * 第二刀钉的是"本来就不在"：一次什么都没删的调用必须返回 false ——
+     * 界面靠它决定要不要说"已移除"。
+     */
+    @Test
+    fun removingABankDropsItsCatalogEntryAndItsQuestionFile() = runTest {
+        val storage = InMemoryTextStorage()
+        val repository = JsonBankRepository(storage)
+        repository.save(bank())
+        repository.save(bank().copy(bankId = "b2", title = "另一个题库"))
+        assertNotNull(storage.read(questionFileOf("b1")))
+
+        assertTrue(repository.delete("b1"))
+        assertNull(storage.read(questionFileOf("b1")), "题目文件不能留在磁盘上变成无人认领的字节")
+        assertEquals(listOf("b2"), JsonBankRepository(storage).list().map { it.bankId })
+
+        val survivor = assertNotNull(JsonBankRepository(storage).find("b2"))
+        assertEquals(1, survivor.questionCount, "删一个库不该动到另一个库的题数")
+        assertEquals("题干", survivor.questions.single().promptMarkdown)
+
+        assertFalse(repository.delete("b1"), "第二次删除什么都没删，不能报告成功")
+    }
+
 }

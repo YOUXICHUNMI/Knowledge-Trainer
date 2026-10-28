@@ -25,6 +25,7 @@ import morefish.knowledge.trainer.domain.tools.Conversion
 import morefish.knowledge.trainer.domain.tools.Dimension
 import morefish.knowledge.trainer.domain.tools.Units
 import morefish.knowledge.trainer.application.port.ChoiceMapping
+import morefish.knowledge.trainer.infrastructure.storage.JsonBankRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonGraphRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -963,6 +964,142 @@ class AppControllerTest {
         assertEquals(1, c.banks.size, "重复导入不能悄悄建副本")
         assertNotNull(c.importing.preview, "第二次也要能看到自己导的是什么")
         assertTrue(c.banner?.text.orEmpty().contains("已经导入过"))
+    }
+
+    // ---- 移除题库 ----
+
+    /**
+     * 移除是"从书架上拿下来"，不是"把记忆清零"。
+     *
+     * 这条钉的是**不该跟着消失的东西**：历史是已经发生的事、笔记是自己写的字。
+     * 删题库时最容易顺手写成级联删除，而级联删除在这里是不可逆的伤害。
+     */
+    @Test
+    fun removingABankTakesItOffTheShelfButKeepsHistoryAndNotes() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+
+        val bank = c.banks.single()
+        c.startPractice(bank, questionCount = 2)
+        answerCurrent(c)
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, c.history.size)
+
+        c.openNewNote(NoteScope.BANK, bank.bankId)
+        c.notes.save(assertNotNull(c.notes.seed).copy(bodyMarkdown = "这个库的读书笔记"))
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, c.notes.all.size)
+        c.goHome()
+
+        c.deleteBank(bank.bankId)
+        testScheduler.advanceUntilIdle()
+
+        assertTrue(c.banks.isEmpty(), "移除之后首页不该还挂着它")
+        assertEquals(1, c.history.size, "历史是已经发生的事，不该跟着题库一起消失")
+        assertEquals(1, c.notes.all.size, "自己写的笔记更不该消失")
+        assertFalse(c.banner?.isError ?: true)
+        assertTrue(c.banner?.text.orEmpty().contains("已移除题库"), "做了什么要说清楚：${c.banner?.text}")
+        assertTrue(c.banner?.text.orEmpty().contains("历史与笔记一条没动"))
+    }
+
+    /**
+     * 指向被删题库的关系一起消失，并且删了几条要说得出来。
+     *
+     * 关系是"两段内容之间的关系"：一端的内容已经不在了，留着它只会让图谱页
+     * 永远挂着一堆"缺失"，而用户明明刚刚说过不要那个库。
+     */
+    @Test
+    fun removingABankAlsoDropsTheGraphEdgesThatPointAtIt() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+
+        val bank = c.banks.single()
+        val source = bank.questions[0]
+        val target = bank.questions[1]
+        c.openGraph()
+        c.openGraphEditor(source = QuestionRef(bank.bankId, source.questionId))
+        c.graph.beginPick(GraphPickSide.TARGET)
+        c.graph.updateQuery(target.promptMarkdown.take(4))
+        testScheduler.advanceUntilIdle()
+        c.graph.pickHit(c.graph.hits.first())
+        c.saveGraphEdge()
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, JsonGraphRepository(storage).load().edges.size, "先确认关系真的落盘了")
+
+        c.goHome()
+        c.deleteBank(bank.bankId)
+        testScheduler.advanceUntilIdle()
+
+        assertTrue(JsonGraphRepository(storage).load().edges.isEmpty(), "题库没了，关系也不该留在磁盘上")
+        assertTrue(c.graph.merged.edges.isEmpty())
+        assertTrue(c.banner?.text.orEmpty().contains("1 条"), "删了几条要说出来：${c.banner?.text}")
+    }
+
+    /**
+     * 挂在被删题库上的"继续练习"必须一起消失。
+     *
+     * 留着的话首页一直挂着入口，点进去一道题都找不到 —— 那是坏掉的样子，
+     * 而用户只是删了个题库。已提交的那条记录仍然在历史里（历史只追加）。
+     */
+    @Test
+    fun removingABankDropsTheUnfinishedPracticeOnIt() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+
+        val bank = c.banks.single()
+        c.startPractice(bank, questionCount = 3)
+        answerCurrent(c)
+        testScheduler.advanceUntilIdle()
+        c.pauseAndExit()
+        testScheduler.advanceUntilIdle()
+        assertNotNull(c.practice.resumable)
+
+        c.deleteBank(bank.bankId)
+        testScheduler.advanceUntilIdle()
+        assertNull(c.practice.resumable)
+        assertTrue(c.banner?.text.orEmpty().contains("没做完的那场练习已放弃"))
+
+        // 换一个控制器（模拟重启）：会话文件也得是干净的，不能又从磁盘上冒出来
+        val restarted = controller(storage, testScheduler)
+        restarted.refresh()
+        testScheduler.advanceUntilIdle()
+        assertNull(restarted.practice.resumable)
+        assertEquals(1, restarted.history.size, "已提交的那一条仍在历史里")
+        assertTrue(restarted.banks.isEmpty())
+    }
+
+    /**
+     * 磁盘上本来就没有这个库：内存里那份要放掉，但不能报"已移除"。
+     *
+     * 场景不算离奇 —— 另一个窗口删过、或者刚才恢复备份把它换掉了。
+     * 对一次没发生的删除说"已移除"，是在编一个让自己显得很忙的结论。
+     */
+    @Test
+    fun removingABankThatIsAlreadyGoneDoesNotPretendItDidSomething() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+
+        val bank = c.banks.single()
+        // 绕过界面直接从磁盘删掉：界面上那一份还活着
+        assertTrue(JsonBankRepository(storage).delete(bank.bankId))
+
+        c.deleteBank(bank.bankId)
+        testScheduler.advanceUntilIdle()
+
+        assertTrue(c.banks.isEmpty(), "内存里那份也要放掉，否则界面显示一个磁盘上不存在的库")
+        assertNull(c.banner, "什么都没删，就不要说「已移除」")
     }
 
 }

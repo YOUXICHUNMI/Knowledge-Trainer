@@ -23,7 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -450,6 +453,9 @@ private fun BankCard(bank: QuestionBank, controller: AppController, favoriteCoun
     val seed = bank.bankId.hashCode().let { if (it == Int.MIN_VALUE) 0 else it } and 0x7FFFFFFF
     val pair = avatarColors[seed % avatarColors.size]
 
+    // 移除是二次确认的：第一次点只把按钮换成"确认移除"，换卡片或重进首页都会退回去
+    var confirmingRemove by remember(bank.bankId) { mutableStateOf(false) }
+
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -530,6 +536,27 @@ private fun BankCard(bank: QuestionBank, controller: AppController, favoriteCoun
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Faint,
             )
+        }
+
+        // 移除入口放在最底下、并且默认是一句"移除题库"：它不在主路径上，
+        // 但要能被找到 —— 导错一个包却没法从书架上拿下来，是更糟的体验。
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (confirmingRemove) {
+                Text(
+                    "题目文件会删除，历史与笔记保留",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Wrong,
+                    modifier = Modifier.weight(1f),
+                )
+                GhostButton("确认移除", color = Palette.Wrong, onClick = {
+                    confirmingRemove = false
+                    controller.deleteBank(bank.bankId)
+                })
+                GhostButton("取消", onClick = { confirmingRemove = false })
+            } else {
+                GhostButton("移除题库", color = Palette.Faint, onClick = { confirmingRemove = true })
+            }
         }
     }
 }

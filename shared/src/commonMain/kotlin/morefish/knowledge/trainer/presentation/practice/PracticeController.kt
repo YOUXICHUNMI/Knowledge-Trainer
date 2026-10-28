@@ -252,6 +252,20 @@ class PracticeController(
         scope.launch { lifecycle.discard(stored) }
     }
 
+    /**
+     * 题库被移除：挂在它上面的"待继续练习"一起丢掉。
+     *
+     * 必须是 suspend，而且**要在重读之前完成**：会话文件里还留着这份清单，
+     * 先重读就会把它又捧回首页，点进去一道题都找不到。返回 true 表示确实丢掉了一场。
+     */
+    suspend fun dropResumableOf(bankId: String): Boolean {
+        val stored = resumable ?: return false
+        if (stored.bankId != bankId) return false
+        lifecycle.discard(stored)
+        resumable = null
+        return true
+    }
+
     fun toggleOption(optionId: String) {
         if (feedback != null) return
         val type = currentQuestion?.type ?: return

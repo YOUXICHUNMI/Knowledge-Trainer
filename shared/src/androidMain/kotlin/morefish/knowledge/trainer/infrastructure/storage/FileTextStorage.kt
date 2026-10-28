@@ -32,4 +32,16 @@ class FileTextStorage(private val root: File) : TextStorage {
     override fun appendLine(name: String, line: String) {
         File(root, name).apply { parentFile?.mkdirs() }.appendText(line + "\n")
     }
+
+    /** 与桌面端同一套语义：删文件，删空了就把紧邻的一层目录也收掉，不动根目录。 */
+    override fun delete(name: String): Boolean {
+        val target = File(root, name)
+        if (!target.isFile) return false
+        val removed = target.delete()
+        val parent = target.parentFile
+        if (removed && parent != null && parent.absolutePath != root.absolutePath && parent.isDirectory) {
+            if (parent.list()?.isEmpty() == true) parent.delete()
+        }
+        return removed
+    }
 }

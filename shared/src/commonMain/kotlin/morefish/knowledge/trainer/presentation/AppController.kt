@@ -1479,6 +1479,45 @@ class AppController(
         onNotice = { text, isError -> banner = Banner(text, isError) },
     )
 
+    // ---- 移除题库 ----
+
+    /**
+     * 从书架上移除一个题库。
+     *
+     * 这件事只有组合根做得了：它要动四样东西 —— 题库（仓储）、指向它的关系（图谱）、
+     * 挂在它上面的未完成练习（作答）、它的媒体字节（媒体库）。四样各有各的主人，
+     * 谁替谁顺手删都不合适，所以编排留在这里，每一步仍由各自那一侧执行。
+     *
+     * **不动的**：历史、复核、笔记、收藏。它们是已经发生的事，删题库不等于删记忆 ——
+     * 错题本按"关联已失效"标注，笔记里那几句是自己写的，一个字都不该少。
+     *
+     * 顺序也是想过的：先删题库（目录是提交点），再收拾指向它的东西。反过来的话，
+     * 中途失败会留下"关系删了、题库还在"的状态 —— 那比不删更难解释。
+     */
+    fun deleteBank(bankId: String) {
+        val bank = banks.firstOrNull { it.bankId == bankId } ?: return
+        scope.launch {
+            if (!deps.bankRepository.delete(bankId)) {
+                // 磁盘上本来就没有它（另一次删除、或恢复覆盖了数据）：把内存里这份也放掉，
+                // 但不当成"刚删掉" —— 对一次没发生的删除说"已移除"是在编。
+                loadAll()
+                return@launch
+            }
+            val edges = graph.pruneBank(bankId)
+            val dropped = practice.dropResumableOf(bankId)
+            deps.mediaStore.removeAll(bankId)
+            loadAll()
+            banner = Banner(removalNotice(bank, edges, dropped), isError = false)
+        }
+    }
+
+    private fun removalNotice(bank: QuestionBank, edges: Int, droppedSession: Boolean): String = buildString {
+        append("已移除题库《").append(bank.title).append("》（").append(bank.questionCount).append(" 题）")
+        if (edges > 0) append("，$edges 条指向它的关系随之删除")
+        if (droppedSession) append("，没做完的那场练习已放弃")
+        append("。历史与笔记一条没动。")
+    }
+
     /** 题库卡片上的快捷入口：全部范围、固定题量。抽题规则见 [PracticeSetupController.quickSession]。 */
     fun startPractice(bank: QuestionBank, questionCount: Int? = null) {
         val created = setup.quickSession(bank, questionCount)

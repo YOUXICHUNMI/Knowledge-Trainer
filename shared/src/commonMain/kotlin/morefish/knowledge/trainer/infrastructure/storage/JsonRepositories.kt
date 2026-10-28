@@ -114,6 +114,24 @@ class JsonBankRepository(
     }
 
     /**
+     * 移除题库：**先改目录，再删题目文件**。
+     *
+     * 顺序有讲究：目录是提交点。反过来的话，进程在两步之间被杀，目录里还挂着一个
+     * 题目文件已经没了的库 —— 首页写着"N 题"，点进去一道题都没有。现在的顺序
+     * 最坏只留下一个孤儿文件（列表不读它），不会让列表说谎。
+     *
+     * 返回 false 表示目录里本来就没有这个库：不写文件、不留痕。
+     */
+    override suspend fun delete(bankId: String): Boolean = mutex.withLock {
+        val catalog = readCatalogLocked()
+        if (catalog.none { it.bankId == bankId }) return@withLock false
+        val next = catalog.filterNot { it.bankId == bankId }
+        storage.write(BANKS_FILE, json.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = next)))
+        storage.delete(questionFileOf(bankId))
+        true
+    }
+
+    /**
      * 精确定位：每个库只读一次文件，逐行找目标 id。
      *
      * 关键在第二道过滤：解码之前先看这一行是否**真的**包含要找的 id。

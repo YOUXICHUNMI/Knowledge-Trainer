@@ -404,6 +404,31 @@ class GraphController(
     }
 
     /**
+     * 题库被移除之后：清掉指向它的手建关系，返回删掉的条数。
+     *
+     * 关系是"两段内容之间的关系"；一端的内容已经不在了，这条关系就没有意义 ——
+     * 留着只会让图谱页永远挂着一堆"缺失"，而用户本来就明确说过不要那个库。
+     * 这不是级联删除内容：删掉的是描述内容之间联系的记录，题库内容早在别处没了。
+     *
+     * 扩展包带来的关系不在这里处理：它们每次从包里合并，本来就不落盘。
+     */
+    suspend fun pruneBank(bankId: String): Int {
+        if (bankId.isBlank()) return 0
+        val doomed = userGraph.edges.filter { it.source.bankId == bankId || it.target.bankId == bankId }
+        if (doomed.isEmpty()) return 0
+        busy = true
+        val next = doomed.fold(userGraph) { graph, edge -> graph.withoutEdge(edge.edgeId) }.pruned()
+        graphs.save(next)
+        userGraph = next
+        merged = next.mergedWith(activeExtensions())
+        // 正盯着刚被删掉的那道题时，筛选条件自己失效 —— 留着它，页面会是一片空白而没说原因
+        if (questionFilter?.bankId == bankId) questionFilter = null
+        busy = false
+        refreshView()
+        return doomed.size
+    }
+
+    /**
      * 复核：用户看过当前内容，确认"这条关系仍然成立"。
      *
      * 这不是自动修复。内容版本变了就必须有人再看一眼，

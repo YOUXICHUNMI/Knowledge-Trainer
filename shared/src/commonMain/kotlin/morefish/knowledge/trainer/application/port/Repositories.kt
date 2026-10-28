@@ -35,6 +35,17 @@ interface BankRepository {
     suspend fun save(bank: QuestionBank)
 
     /**
+     * 从书架上移除一个题库：目录条目与它的题目文件一起删掉。
+     *
+     * 返回 false 表示库里本来就没有它 —— "本来就不在"和"刚删掉"是两件事，
+     * 界面不该把前者也说成"已移除"。
+     *
+     * **历史、笔记、收藏不归它管**：那些是既成事实，删题库不等于删记忆。
+     * 指向这个库的关系与未完成会话由调用方各自收拾（两边都不属于题库仓储）。
+     */
+    suspend fun delete(bankId: String): Boolean
+
+    /**
      * 按引用精确定位题目。题库不在、题目不在时对应键缺席。
      *
      * 实现应按库只读一次文件、逐行扫描，**不构造整库题目列表**：
@@ -179,6 +190,14 @@ interface TextStorage {
     fun read(name: String): String?
     fun write(name: String, content: String)
     fun appendLine(name: String, line: String)
+
+    /**
+     * 删除一个文件。不存在时返回 false。
+     *
+     * 端口只认名字，不认目录：目录怎么摆是实现的私事。删除是**幂等**的 ——
+     * "再删一次"不该失败，删除本来就是"希望它不在"，第二次它确实不在。
+     */
+    fun delete(name: String): Boolean
 }
 
 class InMemoryTextStorage : TextStorage {
@@ -197,4 +216,6 @@ class InMemoryTextStorage : TextStorage {
         if (sb.isNotEmpty() && !sb.endsWith("\n")) sb.append('\n')
         sb.append(line).append('\n')
     }
+
+    override fun delete(name: String): Boolean = files.remove(name) != null
 }

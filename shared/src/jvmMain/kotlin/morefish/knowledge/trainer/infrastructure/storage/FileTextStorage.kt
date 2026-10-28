@@ -38,5 +38,23 @@ class FileTextStorage(private val root: File) : TextStorage {
         file(name).apply { parentFile?.mkdirs() }.appendText(line + "\n")
     }
 
+    /**
+     * 删文件；如果删完它的父目录空了，把父目录也收掉。
+     *
+     * 题库的题目文件是 `banks/<id>/questions-v1.ndjson` —— 移除一个题库后留下一堆
+     * 空目录，下次有人打开数据目录看，会以为"里面还有东西"。
+     * 只收**紧邻的一层**，且绝不碰根目录：根目录里还有别的文件。
+     */
+    override fun delete(name: String): Boolean {
+        val target = file(name)
+        if (!target.isFile) return false
+        val removed = target.delete()
+        val parent = target.parentFile
+        if (removed && parent != null && parent.absoluteFile != root.absoluteFile && parent.isDirectory) {
+            if (parent.list()?.isEmpty() == true) parent.delete()
+        }
+        return removed
+    }
+
     private fun file(name: String): File = File(root, name)
 }
