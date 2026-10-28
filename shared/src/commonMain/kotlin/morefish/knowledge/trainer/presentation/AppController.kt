@@ -111,6 +111,7 @@ import morefish.knowledge.trainer.domain.practice.QuestionKey
 import morefish.knowledge.trainer.domain.practice.StudyStats
 import morefish.knowledge.trainer.presentation.ai.AiController
 import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
+import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
 import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
 import morefish.knowledge.trainer.presentation.setup.SetupStart
@@ -2197,70 +2198,26 @@ class AppController(
 
     // ---- 离线手工编辑 ----
 
-    var editorBankId by mutableStateOf<String?>(null)
-        private set
-    var editorIssues by mutableStateOf<List<ValidationIssue>>(emptyList())
-        private set
-    var editorSaved by mutableStateOf(false)
-        private set
-    var editorBusy by mutableStateOf(false)
-        private set
-
-    val editorBank: QuestionBank? get() = banks.firstOrNull { it.bankId == editorBankId }
+    /**
+     * 手工新建题目的草稿校验与落盘。
+     *
+     * 表单字段留在 `QuestionEditorScreen` 的本地状态里，它只收"点保存那一刻"的成品题目 ——
+     * 每敲一个字就构造一个不可变题目，会让"正在输入、还没校验"的中间态变成全局状态。
+     */
+    val questionEditor = QuestionEditorController(
+        repository = deps.bankRepository,
+        banks = { banks },
+        scope = scope,
+        onBankChanged = { refresh() },
+    )
 
     fun openQuestionEditor(bankId: String) {
-        editorBankId = bankId
-        editorIssues = emptyList()
-        editorSaved = false
+        questionEditor.open(bankId)
         screen = Screen.QUESTION_EDITOR
     }
 
     fun closeQuestionEditor() {
         screen = Screen.HOME
-    }
-
-    /** 「再写一题」：清掉保存成功标记与旧校验信息，表单字段由界面自己重置。 */
-    fun beginNextManualQuestion() {
-        editorSaved = false
-        editorIssues = emptyList()
-    }
-
-    /**
-     * 手工新建题目（个人扩展）。校验 fail-closed：有任何 ERROR 就不落盘。
-     * 题库 contentRevision 递增，题目按现状追加，历史不动。
-     */
-    fun addManualQuestion(bankId: String, question: Question) {
-        val errors = question.validate().filter { it.severity == Severity.ERROR }
-        editorIssues = errors
-        if (errors.isNotEmpty()) return
-
-        scope.launch {
-            editorBusy = true
-            val bank = deps.bankRepository.find(bankId)
-            if (bank == null) {
-                editorBusy = false
-                editorIssues = listOf(
-                    ValidationIssue(Severity.ERROR, "bank-missing", "题库不存在或已被删除"),
-                )
-                return@launch
-            }
-            if (bank.questions.any { it.questionId == question.questionId }) {
-                editorBusy = false
-                editorIssues = listOf(
-                    ValidationIssue(Severity.ERROR, "duplicate-id", "题目 ID ${question.questionId} 已存在，请换一个"),
-                )
-                return@launch
-            }
-            val updated = bank.copy(
-                questions = bank.questions + question,
-                contentRevision = bank.contentRevision + 1,
-            )
-            deps.bankRepository.save(updated)
-            editorBusy = false
-            editorSaved = true
-            editorIssues = emptyList()
-            refresh()
-        }
     }
 
     /**

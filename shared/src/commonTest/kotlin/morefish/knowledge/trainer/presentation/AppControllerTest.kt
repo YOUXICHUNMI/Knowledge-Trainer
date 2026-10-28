@@ -207,11 +207,12 @@ class AppControllerTest {
         controller.refresh()
         val bankId = controller.banks.single().bankId
         val before = controller.banks.single().questions.size
+        val revisionBefore = controller.banks.single().contentRevision
 
         controller.openQuestionEditor(bankId)
         assertEquals(Screen.QUESTION_EDITOR, controller.screen)
 
-        controller.addManualQuestion(
+        controller.questionEditor.add(
             bankId,
             morefish.knowledge.trainer.domain.model.Question(
                 questionId = "manual-test-1",
@@ -223,11 +224,12 @@ class AppControllerTest {
         )
         testScheduler.advanceUntilIdle()
 
-        assertTrue(controller.editorSaved, "合法题目应保存成功")
-        assertTrue(controller.editorIssues.isEmpty())
+        assertTrue(controller.questionEditor.saved, "合法题目应保存成功")
+        assertTrue(controller.questionEditor.issues.isEmpty())
         val bank = controller.banks.single()
         assertEquals(before + 1, bank.questions.size)
         assertEquals("manual-test-1", bank.questions.last().questionId)
+        assertEquals(revisionBefore + 1, bank.contentRevision, "加了题就是新一版内容，版本号必须跟着走")
 
         // 新题立即可练（进入可练集合）
         val bankAfter = assertNotNull(controller.banks.single())
@@ -248,7 +250,7 @@ class AppControllerTest {
         val before = controller.banks.single().questions.size
 
         // 单选没有正确答案：ERROR 级校验必须拦截，不得落盘
-        controller.addManualQuestion(
+        controller.questionEditor.add(
             bankId,
             morefish.knowledge.trainer.domain.model.Question(
                 questionId = "manual-bad",
@@ -262,10 +264,47 @@ class AppControllerTest {
         )
         testScheduler.advanceUntilIdle()
 
-        assertFalse(controller.editorSaved)
-        assertTrue(controller.editorIssues.isNotEmpty())
+        assertFalse(controller.questionEditor.saved)
+        assertTrue(controller.questionEditor.issues.isNotEmpty())
         assertEquals(before, controller.banks.single().questions.size, "非法题目不得写入题库")
     }
+    @Test
+    fun manualQuestionWithAnExistingIdIsRejected() = runTest {
+        val storage = InMemoryTextStorage()
+        seedBank(storage)
+
+        val controller = controller(storage, testScheduler)
+        controller.refresh()
+        val bankId = controller.banks.single().bankId
+        val existing = controller.banks.single().questions.first()
+        val before = controller.banks.single().questions.size
+
+        controller.questionEditor.add(
+            bankId,
+            morefish.knowledge.trainer.domain.model.Question(
+                questionId = existing.questionId,
+                type = QuestionType.SHORT_ANSWER,
+                promptMarkdown = "顶着旧 ID 的新题",
+                answerText = "答案",
+            ),
+        )
+        testScheduler.advanceUntilIdle()
+
+        // ID 是进度、复核、错题本匹配题目的唯一依据：撞了 ID 会让"这道题的作答记录"
+        // 被两套题面共享，事后分不清哪条历史属于谁。所以宁可拒收，也不覆盖。
+        assertFalse(controller.questionEditor.saved)
+        assertTrue(
+            controller.questionEditor.issues.any { it.code == "duplicate-id" },
+            "应指出是 ID 重复，而不是笼统说保存失败",
+        )
+        assertEquals(before, controller.banks.single().questions.size)
+        assertEquals(
+            existing.promptMarkdown,
+            controller.banks.single().questions.first { it.questionId == existing.questionId }.promptMarkdown,
+            "原题必须留在原处，不能被同名 ID 顶掉",
+        )
+    }
+
     // ---- 个人笔记 ----
 
     @Test

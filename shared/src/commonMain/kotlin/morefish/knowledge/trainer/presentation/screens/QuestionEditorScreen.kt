@@ -52,7 +52,7 @@ import morefish.knowledge.trainer.presentation.ui.SecondaryButton
  */
 @Composable
 fun QuestionEditorScreen(controller: AppController) {
-    val bank = controller.editorBank
+    val bank = controller.questionEditor.bank
     ScreenScaffold(title = "新建题目", subtitle = bank?.title ?: "", onBack = controller::closeQuestionEditor) {
         if (bank == null) {
             Text("题库不存在或已被删除", style = MaterialTheme.typography.bodyLarge, color = Palette.Wrong)
@@ -68,7 +68,7 @@ private class FragmentDraft(var content: String = "", var correct: Boolean = fal
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditorForm(controller: AppController) {
-    val bankId = controller.editorBankId ?: return
+    val bankId = controller.questionEditor.bankId ?: return
     val fieldShape = RoundedCornerShape(12.dp)
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = Palette.Accent,
@@ -226,7 +226,7 @@ private fun EditorForm(controller: AppController) {
             LabeledField("解析（可选）", explanation, fieldColors, fieldShape, minLines = 2) { explanation = it }
         }
 
-        val issues = controller.editorIssues
+        val issues = controller.questionEditor.issues
         if (issues.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Panel(accent = Palette.Wrong) {
@@ -237,7 +237,7 @@ private fun EditorForm(controller: AppController) {
                 }
             }
         }
-        if (controller.editorSaved) {
+        if (controller.questionEditor.saved) {
             Spacer(Modifier.height(10.dp))
             Panel(accent = Palette.Correct) {
                 Text("已保存到本题库，可继续写下一题或返回首页。", style = MaterialTheme.typography.bodyMedium, color = Palette.Correct)
@@ -247,17 +247,17 @@ private fun EditorForm(controller: AppController) {
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton(
-                if (controller.editorBusy) "保存中…" else "保存题目",
-                enabled = !controller.editorBusy && !controller.editorSaved,
+                if (controller.questionEditor.busy) "保存中…" else "保存题目",
+                enabled = !controller.questionEditor.busy && !controller.questionEditor.saved,
                 onClick = {
                     val question = buildQuestion(
                         type, keywordsMode, prompt, answerText, required, forbidden, explanation, fragments,
                         idSeed = morefish.knowledge.trainer.domain.model.Ids.uuid().take(8).lowercase(),
                     )
-                    controller.addManualQuestion(bankId, question)
+                    controller.questionEditor.add(bankId, question)
                 },
             )
-            SecondaryButton("再写一题", enabled = controller.editorSaved, onClick = {
+            SecondaryButton("再写一题", enabled = controller.questionEditor.saved, onClick = {
                 prompt = ""
                 answerText = ""
                 required = ""
@@ -268,7 +268,7 @@ private fun EditorForm(controller: AppController) {
                 fragments.add(FragmentDraft())
                 type = QuestionType.SINGLE_CHOICE
                 keywordsMode = false
-                controller.beginNextManualQuestion()
+                controller.questionEditor.beginNext()
             })
         }
         Spacer(Modifier.height(24.dp))

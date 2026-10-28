@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2829 行（3371 → 3219 → 3160 → 2972 → 2829） |
+| `AppController.kt` | 2786 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，616 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，617 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -30,7 +30,7 @@ presentation/
   history/HistoryController.kt      ✅ 已拆
   setup/PracticeSetupController.kt ✅ 已拆
   ai/AiController.kt                ✅ 已拆
-  editor/QuestionEditorController.kt
+  editor/QuestionEditorController.kt ✅ 已拆
   review/ReviewController.kt
   batch/BatchController.kt
   importing/ImportController.kt
@@ -67,7 +67,7 @@ presentation/
 | 2 | 历史与日历 | ~82 | `HistoryScreen` | ✅ 已完成 |
 | 3 | 练习设置 | ~86 | `PracticeSetupScreen` | ✅ 已完成 |
 | 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | ✅ 已完成 |
-| 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | 待做 |
+| 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | ✅ 已完成 |
 | 6 | 历史复核 | ~199 | `ReviewScreens` | 待做 |
 | 7 | 批量队列 | ~211 | `AiScreen` | 待做 |
 | 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | 待做 |
@@ -177,3 +177,24 @@ presentation/
   切到第二题后缓存键必须变、`currentExplanation` 必须为空、已有记录不能跟着冒充；
   第二题没作答也不许发请求。这条钉的正是"读取器而不是快照"这个决定。
 - 文件从 2972 行降到 2829 行；615 → 616 用例全绿，行为不变。
+
+## 已完成的第五刀（离线手工编辑）
+
+- 新增 `presentation/editor/QuestionEditorController.kt`（108 行）：当前题库、校验结果、
+  保存成功标记、忙碌标记，以及"校验 → 落盘 → 版本号加一"这整条链路。
+- 值得单独存在的理由是**校验与写入必须写在一起**：规矩是 fail-closed（有任何 ERROR
+  就不落盘），且落盘要连带把 `contentRevision` 加一。这两句分开写在两个文件里，
+  就没人能一眼确认"校验过了就真会写、写了就真校验过"。
+- **表单字段没有搬进来。** 题干、选项、答案仍是 `QuestionEditorScreen` 的本地状态，
+  只在点保存那一刻组装成 `Question` 递过来。每敲一个字就往控制器里推一个不可变题目，
+  既慢，也会让"正在输入、还没校验"的中间态变成全局状态 —— 别处读到时无法判断它算不算数。
+- 它写的是**题库**（别人的数据），所以写完之后不自己重读，只通过 `onBankChanged`
+  说一句"题库变了"。重读要连带历史、统计、图谱一起换，那是组合根的事。
+- 组合根留下 `openQuestionEditor` / `closeQuestionEditor` 两条导航 —— 编辑器也一样
+  "不导航"，这刀没有例外。
+- 调用方 15 行：`QuestionEditorScreen` 9 处、`AppControllerTest` 6 处（另加 1 个新用例）。
+- 用例 616 → 617：新增 `manualQuestionWithAnExistingIdIsRejected`。顺手在原有用例里
+  补了一条断言（`contentRevision` 必须 +1）—— 加题就是新一版内容，这条以前没人看着。
+  重复 ID 之所以必须拒收而不是覆盖：ID 是进度、复核、错题本匹配题目的唯一依据，
+  撞了 ID 会让两套题面共享同一批作答记录，事后分不清哪条历史属于谁。
+- 文件从 2829 行降到 2786 行。
