@@ -5,6 +5,6 @@ OK  examples/_packages/advanced.qbank
     语言 en: 2/6
     语言 zh-Hans: 6/6
     增强：{'reconstruction': 1, 'distractor': 1}
-    digest=34b6708b09de59c3a1d3c5a57dce600a7a9204efa21391edd5e98f4244ac6424
-    内容摘要=4756136d3201944978bee0004af6a9ce14752f6e3b11acbb526fee186d8c2c82
+    digest=8566fffddf98eae66944d57b25c720b169380fb319ea5c02b6e72b5321077683
+    内容摘要=e3788f7086d7a7f95a95eb0d86890c1ace260f4a76528f61939be0bd592a6992
   WARN  [LOCALE_PARTIAL] en 只覆盖 2/6 题，缺 4 题

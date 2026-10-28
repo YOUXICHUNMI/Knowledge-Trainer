@@ -1,0 +1,21 @@
+# 换行：索引里是 LF，工作区也必须是 LF —— 不能交给 core.autocrlf 的本地设置。
+#
+# 起因（2026-10-28 首轮 CI 暴露）：Windows 上 core.autocrlf=true，
+# tools/qbank-authoring-skill/examples/advanced-authoring/media/index.ndjson
+# 被检出成 CRLF，用这台机器打出来的 advanced.qbank 里就带着 \r\n。
+# 索引里那份源文件是 LF，于是 Linux 上重建同一个包，字节不同 ——
+# "随附包与现场打包一致"这条检查在 Windows 上永远绿，在 Linux 上必红。
+# 包是可复现构建的产物，"同一份源目录 → 同一串字节"必须跨平台成立，
+# 所以换行规则写进仓库，而不是指望每台机器的 git config。
+* text=auto eol=lf
+
+# 这些是字节，不是文本：任何换行转换都会让 sha256 变。
+*.qbank  binary
+*.apk    binary
+*.msi    binary
+*.ico    binary
+*.png    binary
+*.jpg    binary
+
+# cmd.exe 对 LF 的容忍度不可靠，批处理保留 CRLF。
+*.bat    text eol=crlf
