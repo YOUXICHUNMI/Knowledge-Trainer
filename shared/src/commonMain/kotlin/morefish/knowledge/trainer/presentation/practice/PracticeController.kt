@@ -145,6 +145,25 @@ class PracticeController(
         }
 
     /**
+     * 把当前草稿折成一次作答。
+     *
+     * **"算不算有答案"只有这一个出处**：提交按钮的可用状态、回车键的语义都读它。
+     * 上一版是界面自己另写一条（只认选项），重组题的按钮因此永远是灰的 ——
+     * 领域层判得出次序、控制器也提交得了，但用户根本按不到那个按钮。
+     */
+    fun currentAnswerDraft(): AnswerInput? {
+        val item = session?.current ?: return null
+        return when (item.question.type) {
+            QuestionType.SHORT_ANSWER -> AnswerInput.Text(textAnswer)
+            QuestionType.ORDERING -> AnswerInput.Ordering(orderedOptionIds)
+            else -> AnswerInput.Choices(selectedOptionIds)
+        }
+    }
+
+    /** 当前这道题凑够作答了没有。空作答不算 —— 与 [AnswerInput.isEmpty] 同一条判定。 */
+    val canSubmitCurrent: Boolean get() = currentAnswerDraft()?.isEmpty == false
+
+    /**
      * 开一场练习。返回 false 表示这个会话里没有可作答的题目（调用方去说明原因）。
      *
      * 清空的是"上一场留下的输入" —— 不清会让新一场的第一题带着旧答案，
@@ -310,11 +329,7 @@ class PracticeController(
         val item = current.current ?: return
         if (feedback != null) return
 
-        val answer: AnswerInput = when (item.question.type) {
-            QuestionType.SHORT_ANSWER -> AnswerInput.Text(textAnswer)
-            QuestionType.ORDERING -> AnswerInput.Ordering(orderedOptionIds)
-            else -> AnswerInput.Choices(selectedOptionIds)
-        }
+        val answer: AnswerInput = currentAnswerDraft() ?: return
         if (answer.isEmpty) {
             onNotice("请先作答再提交", true)
             return

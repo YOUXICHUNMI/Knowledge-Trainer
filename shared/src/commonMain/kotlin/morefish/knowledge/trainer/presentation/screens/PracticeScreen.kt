@@ -783,11 +783,9 @@ private fun MarkSymbol(text: String, color: Color) {
 @Composable
 private fun SubmitBar(controller: AppController, item: SessionItem) {
     val question = item.question
-    val hasAnswer = if (question.type == QuestionType.SHORT_ANSWER) {
-        controller.practice.textAnswer.isNotBlank()
-    } else {
-        controller.practice.selectedOptionIds.isNotEmpty()
-    }
+    // 有没有答案由控制器一条判定说了算（它还要喂给键盘回车）。
+    // 这里原来另写了一份"只看选项"的规则，重组题因此永远点不到提交。
+    val hasAnswer = controller.practice.canSubmitCurrent
 
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -799,6 +797,11 @@ private fun SubmitBar(controller: AppController, item: SessionItem) {
                             else "已选 ${controller.practice.selectedOptionIds.size} 项 · 完全匹配才算正确"
 
                         QuestionType.SHORT_ANSWER -> "逐字符比较，标点、空格、换行都参与判定"
+
+                        QuestionType.ORDERING ->
+                            if (controller.practice.orderedOptionIds.isEmpty()) "依次点击片段组成次序"
+                            else "已排 ${controller.practice.orderedOptionIds.size} 段 · 次序完全对上才算正确"
+
                         else -> if (controller.practice.selectedOptionIds.isEmpty()) "选择一个选项后提交" else "已选择，可以提交"
                     },
                     style = MaterialTheme.typography.bodySmall,

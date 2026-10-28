@@ -16,8 +16,13 @@ import morefish.knowledge.trainer.domain.graph.GraphRelation
 import morefish.knowledge.trainer.domain.graph.GraphSnapshot
 import morefish.knowledge.trainer.domain.graph.KnowledgeGraph
 import morefish.knowledge.trainer.domain.graph.QuestionRef
+import morefish.knowledge.trainer.domain.model.GradingSpec
 import morefish.knowledge.trainer.domain.model.NoteScope
+import morefish.knowledge.trainer.domain.model.Question
+import morefish.knowledge.trainer.domain.model.QuestionBank
+import morefish.knowledge.trainer.domain.model.QuestionOption
 import morefish.knowledge.trainer.domain.model.QuestionType
+import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.isPracticable
 import morefish.knowledge.trainer.domain.practice.PracticeScope
 import morefish.knowledge.trainer.domain.tools.CalcOutcome
@@ -1100,6 +1105,63 @@ class AppControllerTest {
 
         assertTrue(c.banks.isEmpty(), "内存里那份也要放掉，否则界面显示一个磁盘上不存在的库")
         assertNull(c.banner, "什么都没删，就不要说「已移除」")
+    }
+
+    /**
+     * 重组题（ordering）排完片段就算有了答案，提交按钮必须亮起来。
+     *
+     * 这条是补一个真实缺陷：界面曾经自己另写一条"有没有答案"的判断（只看选项），
+     * 而重组题的作答放在 `orderedOptionIds` 里 —— 于是领域层判得出次序、控制器也提交得了，
+     * 用户却面对一个永远灰着的按钮。判定现在只有 `canSubmitCurrent` 一处，界面与键盘都读它。
+     */
+    @Test
+    fun anOrderingDraftCountsAsAnAnswerSoTheSubmitButtonUnlocks() = runTest {
+        val storage = InMemoryTextStorage()
+        seedOrderingBank(storage)
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.startPractice(c.banks.single(), questionCount = 1)
+        assertEquals(Screen.PRACTICE, c.screen)
+        assertFalse(c.practice.canSubmitCurrent, "还没排片段就让人提交，等于让人交白卷")
+
+        c.practice.appendFragment("f1")
+        assertTrue(c.practice.canSubmitCurrent, "排了片段就是有答案了")
+
+        c.practice.appendFragment("f2")
+        c.practice.appendFragment("f3")
+        c.practice.submit()
+        testScheduler.advanceUntilIdle()
+
+        val outcome = assertNotNull(c.practice.feedback)
+        assertEquals(Verdict.CORRECT, outcome.evaluation.verdict)
+        assertEquals(listOf("f1", "f2", "f3"), outcome.attempt.orderedOptionIds, "排的次序要原样进历史")
+    }
+
+    /** 只有一个重组题的题库：用来验这条题型，不碰示例题库（改它会让别的用例的题数断言一起变）。 */
+    private suspend fun seedOrderingBank(storage: InMemoryTextStorage) {
+        val question = Question(
+            questionId = "ord-1",
+            type = QuestionType.ORDERING,
+            promptMarkdown = "把片段排成一句通顺的话",
+            options = listOf(
+                QuestionOption("f1", "我"),
+                QuestionOption("f2", "爱"),
+                QuestionOption("f3", "学习"),
+            ),
+            correctOptionIds = setOf("f1", "f2", "f3"),
+            grading = GradingSpec.Ordering(canonical = listOf("f1", "f2", "f3")),
+        )
+        JsonBankRepository(storage).save(
+            QuestionBank(
+                bankId = "ord-bank",
+                title = "片段题",
+                sourceLocale = "zh",
+                questions = listOf(question),
+                importedAtMillis = now,
+                sourceLabel = "test",
+            ),
+        )
     }
 
 }
