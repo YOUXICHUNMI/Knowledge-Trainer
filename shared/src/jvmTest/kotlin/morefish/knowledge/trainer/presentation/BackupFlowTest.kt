@@ -110,12 +110,12 @@ class BackupFlowTest {
 
         a.openBackup()
         assertEquals(Screen.BACKUP, a.screen)
-        assertEquals(1, a.backupSummary.banks)
-        assertEquals(3, a.backupSummary.questions)
+        assertEquals(1, a.backup.summary.banks)
+        assertEquals(3, a.backup.summary.questions)
 
         a.exportBackup()
         scheduler.advanceUntilIdle()
-        val exported = assertNotNull(a.backupExport, "导出成功后应当留下可核对的凭据")
+        val exported = assertNotNull(a.backup.exported, "导出成功后应当留下可核对的凭据")
         assertTrue(exported.digest.length == 64, "摘要应当是 64 位十六进制")
         val qbk = assertNotNull(picker.savedTo, "应当写到文件").also { tempDirs += it }
         assertTrue(qbk.isFile && qbk.length() > 0)
@@ -133,7 +133,7 @@ class BackupFlowTest {
         b.openBackup()
         b.pickBackupFile()
         scheduler.advanceUntilIdle()
-        val intake = assertNotNull(b.backupIntake, "应当读出一份待确认的备份")
+        val intake = assertNotNull(b.backup.intake, "应当读出一份待确认的备份")
         assertTrue(intake.canRestore, "这份备份应当可以恢复：${intake.problems.map { it.message }}")
         assertEquals(1, intake.preview?.manifest?.counts?.banks)
 
@@ -142,7 +142,7 @@ class BackupFlowTest {
         assertEquals(Screen.HOME, b.screen, "恢复完应当回首页而不是停在备份页")
         assertEquals(1, b.banks.size, "恢复之后界面上的题库必须换成备份里的")
         assertEquals(3, b.banks.first().questions.size)
-        assertNull(b.backupIntake, "确认之后不该还挂着待确认状态")
+        assertNull(b.backup.intake, "确认之后不该还挂着待确认状态")
         assertFalse(b.banner?.isError ?: true, "成功横幅不该是错误样式：${b.banner?.text}")
     }
 
@@ -156,7 +156,7 @@ class BackupFlowTest {
         controller.exportBackup()
         scheduler.advanceUntilIdle()
 
-        assertNull(controller.backupExport, "取消保存不该产生一份'已导出'")
+        assertNull(controller.backup.exported, "取消保存不该产生一份'已导出'")
         assertFalse(controller.banner?.isError ?: true, "取消不是失败")
     }
 
@@ -169,22 +169,22 @@ class BackupFlowTest {
 
         a.openBackup()
         // 与界面完全同一套动作：打开开关 → 输两次 → 勾确认 → 点导出
-        a.toggleBackupEncrypt()
-        a.updateBackupExportPassphrase(passphrase)
-        a.updateBackupExportConfirm(passphrase)
-        assertNotNull(a.backupExportBlockReason, "还没勾「忘记口令就打不开」就不该能导出")
-        a.updateBackupExportAck(true)
-        assertNull(a.backupExportBlockReason)
+        a.backup.toggleEncrypt()
+        a.backup.updateExportPassphrase(passphrase)
+        a.backup.updateExportConfirm(passphrase)
+        assertNotNull(a.backup.exportBlockReason, "还没勾「忘记口令就打不开」就不该能导出")
+        a.backup.updateExportAck(true)
+        assertNull(a.backup.exportBlockReason)
 
         a.exportBackup()
         scheduler.advanceUntilIdle()
-        val exported = assertNotNull(a.backupExport, "加密导出应当成功")
+        val exported = assertNotNull(a.backup.exported, "加密导出应当成功")
         assertTrue(exported.encrypted, "给了口令就该是加密备份")
         assertEquals(64, exported.digest.length, "加密备份也要能显示内容摘要")
         // 加密清单里没有文件明细，文件数得从统计里来：starter 导入后是
         // banks-v1.json + banks/<bankId>/questions-v1.ndjson 两个文件。
         assertEquals(2, exported.fileCount, "加密导出也要报对文件数")
-        assertEquals("", a.backupExportPassphrase, "导出之后口令必须从界面状态里抹掉")
+        assertEquals("", a.backup.exportPassphrase, "导出之后口令必须从界面状态里抹掉")
         val qbk = assertNotNull(picker.savedTo).also { tempDirs += it }
 
         // —— 另一台空机器
@@ -200,33 +200,74 @@ class BackupFlowTest {
         b.pickBackupFile()
         scheduler.advanceUntilIdle()
 
-        val locked = assertNotNull(b.backupIntake)
+        val locked = assertNotNull(b.backup.intake)
         assertTrue(locked.requiresPassphrase, "加密备份应当先要口令")
         assertFalse(locked.canRestore)
         assertEquals(1, locked.preview?.manifest?.counts?.banks, "没解锁也要能看到统计，方便判断要不要这份")
         assertFalse(b.banner?.isError ?: true, "「要口令」不是错误，不该打红条")
-        assertEquals("", b.backupUnlockPassphrase)
+        assertEquals("", b.backup.unlockPassphrase)
 
         // 口令错：拒绝，而且界面停在"可以重试"的状态
         b.unlockBackup("记错的口令-海豚毛线九月")
         scheduler.advanceUntilIdle()
-        val afterWrong = assertNotNull(b.backupIntake)
+        val afterWrong = assertNotNull(b.backup.intake)
         assertFalse(afterWrong.canRestore)
-        assertEquals("", b.backupUnlockPassphrase, "口令错时不该把口令留在内存里")
+        assertEquals("", b.backup.unlockPassphrase, "口令错时不该把口令留在内存里")
         assertTrue(b.banner?.isError ?: false)
 
         // 口令对：解锁 → 确认 → 数据换掉
         b.unlockBackup(passphrase)
         scheduler.advanceUntilIdle()
-        assertTrue(assertNotNull(b.backupIntake).canRestore, "口令对了却没解锁：${b.banner?.text}")
-        assertEquals(passphrase, b.backupUnlockPassphrase)
+        assertTrue(assertNotNull(b.backup.intake).canRestore, "口令对了却没解锁：${b.banner?.text}")
+        assertEquals(passphrase, b.backup.unlockPassphrase)
 
         b.confirmRestore()
         scheduler.advanceUntilIdle()
         assertEquals(Screen.HOME, b.screen)
         assertEquals(1, b.banks.size, "加密备份恢复后界面上的题库必须换成备份里的")
         assertEquals(3, b.banks.first().questions.size)
-        assertEquals("", b.backupUnlockPassphrase, "恢复完成后口令必须立刻清掉")
+        assertEquals("", b.backup.unlockPassphrase, "恢复完成后口令必须立刻清掉")
+    }
+
+    /**
+     * 解锁之后不恢复、直接返回：口令与待确认的备份都必须跟着消失。
+     *
+     * 这一条钉的是"这一屏的状态"与"整库的状态"的分界。待确认的备份、解锁口令、
+     * 加密开关都属于备份页；而「离开」这个动作在组合根、清理在备份控制器 ——
+     * 两边都做对，才真的抹得掉。少清一处，一份已经解开的备份会一直留在内存里，
+     * 下次进页面还挂着"可以恢复"，而用户以为那已经是很久以前的事。
+     */
+    @Test
+    fun leavingTheBackupPageForgetsTheUnlockedPassphrase() = runTest {
+        val passphrase = "备份口令-海豚毛线九月"
+        val scheduler = TestCoroutineScheduler()
+        val picker = FakePicker()
+        val controller = controllerOn(tempRoot(), scheduler, picker)
+
+        controller.openBackup()
+        controller.backup.toggleEncrypt()
+        controller.backup.updateExportPassphrase(passphrase)
+        controller.backup.updateExportConfirm(passphrase)
+        controller.backup.updateExportAck(true)
+        controller.exportBackup()
+        scheduler.advanceUntilIdle()
+        val qbk = assertNotNull(picker.savedTo).also { tempDirs += it }
+
+        controller.intakeBackupBytes("bak.qbk", qbk.readBytes())
+        controller.unlockBackup(passphrase)
+        scheduler.advanceUntilIdle()
+        assertEquals(
+            passphrase,
+            controller.backup.unlockPassphrase,
+            "解锁之后要留住口令，否则每点一次都要重新派生一遍",
+        )
+        assertTrue(assertNotNull(controller.backup.intake).canRestore)
+
+        controller.closeBackup()
+        assertEquals(Screen.HOME, controller.screen)
+        assertEquals("", controller.backup.unlockPassphrase, "离开页面不能把钥匙留在锁孔上")
+        assertNull(controller.backup.intake, "待确认的备份不该挂到下一次进来")
+        assertFalse(controller.backup.encrypt, "加密开关回到默认关，下次进来重新决定")
     }
 
     @Test
@@ -236,18 +277,18 @@ class BackupFlowTest {
         val controller = controllerOn(tempRoot(), scheduler, picker)
 
         controller.openBackup()
-        controller.toggleBackupEncrypt()
-        controller.updateBackupExportPassphrase("short")
-        controller.updateBackupExportConfirm("short")
-        controller.updateBackupExportAck(true)
+        controller.backup.toggleEncrypt()
+        controller.backup.updateExportPassphrase("short")
+        controller.backup.updateExportConfirm("short")
+        controller.backup.updateExportAck(true)
 
         // 按钮本身就该是灰的，并且说明原因
-        assertEquals("口令至少 10 个字符", controller.backupExportBlockReason)
+        assertEquals("口令至少 10 个字符", controller.backup.exportBlockReason)
 
         controller.exportBackup()
         scheduler.advanceUntilIdle()
 
-        assertNull(controller.backupExport, "口令太短不该产出备份")
+        assertNull(controller.backup.exported, "口令太短不该产出备份")
         assertNull(picker.savedTo, "更不该弹出保存对话框")
         assertTrue(controller.banner?.isError ?: false)
         assertTrue(controller.banner?.text?.contains("至少") ?: false, "要说清为什么不行：${controller.banner?.text}")
@@ -260,14 +301,14 @@ class BackupFlowTest {
         controller.refresh()
         scheduler.advanceUntilIdle()
 
-        assertFalse(controller.backupSupported)
-        assertFalse(controller.backupCanExport)
-        assertNotNull(controller.backupUnavailableReason)
+        assertFalse(controller.backup.supported)
+        assertFalse(controller.backup.canExport)
+        assertNotNull(controller.backup.unavailableReason)
 
         controller.openBackup()
         controller.exportBackup()
         scheduler.advanceUntilIdle()
-        assertNull(controller.backupExport, "不支持的平台不该导出任何东西")
+        assertNull(controller.backup.exported, "不支持的平台不该导出任何东西")
         assertTrue(controller.banner?.isError ?: false)
     }
 
@@ -291,10 +332,10 @@ class BackupFlowTest {
 
         // 备份页上有固定卡片；点「知道了」之后两处都清掉
         controller.openBackup()
-        assertNotNull(controller.restoreRecovery)
-        assertFalse(controller.restoreRecoveryIsError)
-        controller.dismissRestoreRecovery()
-        assertNull(controller.restoreRecovery)
+        assertNotNull(controller.backup.restoreRecovery)
+        assertFalse(controller.backup.recoveryIsError)
+        controller.backup.dismissRecovery()
+        assertNull(controller.backup.restoreRecovery)
 
         // 再刷新一次也不该再提（否则每次进应用都像出过事）
         controller.dismissBanner()
@@ -316,9 +357,9 @@ class BackupFlowTest {
 
         val banner = assertNotNull(controller.banner)
         assertTrue(banner.isError, "数据不见了必须用错误色，不能混在普通提示里")
-        assertTrue(controller.restoreRecoveryIsError)
+        assertTrue(controller.backup.recoveryIsError)
         // 横幅只给一句结论，具体路径与"别自己删东西"的说明在备份页的卡片里
-        assertNotNull(controller.restoreRecovery?.detail)
+        assertNotNull(controller.backup.restoreRecovery?.detail)
     }
 
     // ---- 引用自检 ----
@@ -332,17 +373,17 @@ class BackupFlowTest {
         scheduler.advanceUntilIdle()
 
         // 进页面就核对：这一页每个数字都必须是"现在"的，自检也一样
-        val onEntry = assertNotNull(controller.backupAudit, "进页面之后应当有一份针对当前数据的自检")
+        val onEntry = assertNotNull(controller.backup.audit, "进页面之后应当有一份针对当前数据的自检")
         assertEquals(1, onEntry.banks)
         assertEquals(3, onEntry.questions)
         assertTrue(onEntry.mediaChecked, "桌面端给得出文件清单，图片必须真的核对过，不能自称不知道")
         assertTrue(onEntry.isClean, "starter 里没有任何指向别处的引用：${onEntry.summary}")
-        assertNotNull(controller.backupAuditAtMillis, "界面要能说出这份结论是什么时候的")
+        assertNotNull(controller.backup.auditAtMillis, "界面要能说出这份结论是什么时候的")
 
         controller.exportBackup()
         scheduler.advanceUntilIdle()
 
-        val afterExport = assertNotNull(controller.backupAudit, "导出之后应当重新核对一遍")
+        val afterExport = assertNotNull(controller.backup.audit, "导出之后应当重新核对一遍")
         assertEquals(onEntry.banks, afterExport.banks)
         // 结论要进横幅：用户点完导出就该看到，而不是自己去下面找
         val banner = assertNotNull(controller.banner)
@@ -373,7 +414,7 @@ class BackupFlowTest {
         scheduler.advanceUntilIdle()
 
         // 数据落地之后拿"刚写进去的那份清单"核对一遍 —— 总纲要求的"最后解析引用"
-        val audit = assertNotNull(b.backupAudit, "恢复之后必须再核对一次，且核对的是恢复后的数据")
+        val audit = assertNotNull(b.backup.audit, "恢复之后必须再核对一次，且核对的是恢复后的数据")
         assertEquals(1, audit.banks)
         assertEquals(3, audit.questions)
         assertTrue(audit.mediaChecked)
@@ -390,16 +431,16 @@ class BackupFlowTest {
         controller.openBackup()
         controller.exportBackup()
         scheduler.advanceUntilIdle()
-        assertNotNull(controller.backupAudit)
+        assertNotNull(controller.backup.audit)
 
-        controller.dismissBackupAudit()
-        assertNull(controller.backupAudit, "「收起」之后面板应当回到没跑过的样子")
-        assertNull(controller.backupAuditAtMillis, "时间也要一起清：留着一个孤立的时间戳只会让人困惑")
+        controller.backup.dismissAudit()
+        assertNull(controller.backup.audit, "「收起」之后面板应当回到没跑过的样子")
+        assertNull(controller.backup.auditAtMillis, "时间也要一起清：留着一个孤立的时间戳只会让人困惑")
 
         controller.recheckBackupAudit()
         scheduler.advanceUntilIdle()
-        val audit = assertNotNull(controller.backupAudit, "页面上的「核对一次」要能重新跑")
+        val audit = assertNotNull(controller.backup.audit, "页面上的「核对一次」要能重新跑")
         assertEquals(1, audit.banks)
-        assertFalse(controller.backupBusy)
+        assertFalse(controller.backup.busy)
     }
 }

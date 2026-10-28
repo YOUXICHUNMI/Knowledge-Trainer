@@ -276,7 +276,7 @@ class ReviewFlowTest {
         assertEquals(0, c.review.pending, "表过态的记录重读之后也不该重新冒出来")
 
         // 备份概况报的是**历史文件**的条数与决定条数，不是合并后的视图
-        assertEquals(1, c.backupSummary.attempts, "复核不改写历史文件，条数不该变")
-        assertEquals(1, c.backupSummary.reviews)
+        assertEquals(1, c.backup.summary.attempts, "复核不改写历史文件，条数不该变")
+        assertEquals(1, c.backup.summary.reviews)
     }
 }

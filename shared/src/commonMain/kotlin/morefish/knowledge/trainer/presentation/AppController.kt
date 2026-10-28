@@ -26,7 +26,6 @@ import morefish.knowledge.trainer.application.port.NoteRepository
 import morefish.knowledge.trainer.application.port.QuestionLocation
 import morefish.knowledge.trainer.application.port.RevisionRepository
 import morefish.knowledge.trainer.application.port.RestoreRecovery
-import morefish.knowledge.trainer.application.port.RestoreRecoveryKind
 import morefish.knowledge.trainer.application.port.ReviewRepository
 import morefish.knowledge.trainer.application.port.SessionRepository
 import morefish.knowledge.trainer.application.port.TextStorage
@@ -51,10 +50,6 @@ import morefish.knowledge.trainer.application.usecase.RunBatchUseCase
 import morefish.knowledge.trainer.application.usecase.SessionLifecycle
 import morefish.knowledge.trainer.application.usecase.StartPracticeSessionUseCase
 import morefish.knowledge.trainer.application.usecase.SubmitAnswerUseCase
-import morefish.knowledge.trainer.domain.backup.BackupCryptoIds
-import morefish.knowledge.trainer.domain.backup.BackupPreview
-import morefish.knowledge.trainer.domain.backup.BackupProblem
-import morefish.knowledge.trainer.domain.backup.ReferenceAudit
 import morefish.knowledge.trainer.domain.backup.auditReferences
 import morefish.knowledge.trainer.domain.extension.ExtensionPack
 import morefish.knowledge.trainer.domain.extension.ExtensionState
@@ -83,6 +78,14 @@ import morefish.knowledge.trainer.domain.practice.StudyStats
 import morefish.knowledge.trainer.presentation.ai.AiController
 import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
 import morefish.knowledge.trainer.presentation.batch.BatchController
+import morefish.knowledge.trainer.presentation.backup.BackupController
+import morefish.knowledge.trainer.presentation.backup.BackupExportVerdict
+import morefish.knowledge.trainer.presentation.backup.BackupIntakeVerdict
+import morefish.knowledge.trainer.presentation.backup.BackupRead
+import morefish.knowledge.trainer.presentation.backup.BackupUnlockVerdict
+import morefish.knowledge.trainer.presentation.backup.PackResult
+import morefish.knowledge.trainer.presentation.backup.PackedBackup
+import morefish.knowledge.trainer.presentation.backup.RestoreVerdict
 import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
 import morefish.knowledge.trainer.presentation.graph.GraphController
 import morefish.knowledge.trainer.presentation.graph.GraphWrite
@@ -206,52 +209,6 @@ enum class Screen {
 }
 
 data class Banner(val text: String, val isError: Boolean)
-
-/**
- * 本机数据概况。数字来自已经载入的内存状态，**不读文件、不打快照** ——
- * 只为了在用户按下"导出"之前告诉他"这次要备份多少东西"。
- */
-data class BackupSummary(
-    val banks: Int,
-    val questions: Int,
-    val attempts: Int,
-    val notes: Int,
-    val reviews: Int,
-) {
-    val isEmpty: Boolean get() = banks == 0 && attempts == 0 && notes == 0
-}
-
-/** 刚导出的那份备份。留在界面上供核对（文件名、大小、摘要）。 */
-data class BackupExportInfo(
-    val fileName: String,
-    val bytes: Long,
-    val digest: String,
-    val createdAtMillis: Long,
-    val fileCount: Int,
-    val encrypted: Boolean,
-)
-
-/**
- * 已读入、待确认的备份。
- *
- * `bytes` 留着是因为确认时要恢复的就是这一份：如果确认时重新去读文件，
- * 用户中途换了文件，就会恢复成另一份东西。
- *
- * [requiresPassphrase] 与 [problems] 分开：加密备份"还没解锁"不是一个错误，
- * 界面要换成一个口令输入框，而不是打出"这份备份不能用"。
- */
-data class BackupIntake(
-    val name: String,
-    val bytes: ByteArray,
-    val preview: BackupPreview?,
-    val problems: List<BackupProblem>,
-    val canRestore: Boolean,
-    val requiresPassphrase: Boolean = false,
-) {
-    // ByteArray 是引用类型，data class 默认的 equals 会误导；按引用比较更诚实（与 PickedFile 一致）
-    override fun equals(other: Any?): Boolean = this === other
-    override fun hashCode(): Int = bytes.contentHashCode() * 31 + name.hashCode()
-}
 
 /**
  * 单屏状态机。刻意不做"千行 ViewModel"：这里只负责串联用例与 UI 状态，
@@ -659,12 +616,10 @@ class AppController(
         }
         // 上次恢复被打断：只说一次，且不挤掉上面那些更要紧的加载警告。
         // 备份页上有固定的卡片，错过这条横幅也还能找回来。
-        if (!restoreRecoveryAnnounced && restoreRecovery != null) {
-            restoreRecoveryAnnounced = true
-            val headline = restoreRecoveryHeadline
-            if (banner == null && headline != null) {
-                banner = Banner(headline, isError = restoreRecoveryIsError)
-            }
+        // 「只说一次」是备份控制器记的：横幅位归谁由这里定，说没说过由那里定。
+        val recovery = backup.takeRecoveryNotice()
+        if (banner == null && recovery != null) {
+            banner = Banner(recovery.text, isError = recovery.isError)
         }
     }
 
@@ -917,83 +872,93 @@ class AppController(
     // ---- 备份与迁移（.qbk） ----
 
     /**
-     * 上次恢复被打断时，启动自愈做了什么（平台入口在构造本类之前算好）。
+     * 导出 / 读入 / 解锁 / 恢复的状态与规则都在 [BackupController] 里。
      *
-     * 这是一条**一次性**的通知：用户点过「知道了」就清空，之后不再提。
-     * 不清空的话，每次进备份页都会看到一段"你曾经出过事"，久了就被当装饰。
+     * 三个用例留在这里、包成 lambda 递进去，不是因为"顺手"：它们的返回类型
+     * （`BackupBundle`、`BackupReadResult`）来自 `infrastructure`，而子控制器只认
+     * application 与 domain。摘字段这一层本来也只有组合根能做 —— 它是唯一允许
+     * 挑具体实现的地方。
      */
-    var restoreRecovery by mutableStateOf(deps.restoreRecovery)
-        private set
+    val backup = BackupController(
+        vault = deps.vault,
+        picker = deps.filePicker,
+        now = { deps.clock.nowMillis() },
+        pack = { secret ->
+            when (val outcome = createBackup.create(secret)) {
+                is BackupExportOutcome.Ok -> PackResult.Ok(
+                    PackedBackup(
+                        fileName = outcome.bundle.fileName,
+                        bytes = outcome.bundle.bytes,
+                        digest = outcome.bundle.contentDigest,
+                        createdAtMillis = outcome.bundle.manifest.createdAtMillis,
+                        fileCount = outcome.bundle.manifest.counts.totalFiles,
+                        encrypted = outcome.bundle.encrypted,
+                        payloadPaths = outcome.bundle.payloadPaths,
+                    ),
+                )
 
-    private var restoreRecoveryAnnounced = false
+                is BackupExportOutcome.Failed -> PackResult.Failed(outcome.message)
+            }
+        },
+        read = { bytes, passphrase ->
+            val result = inspectBackup.inspect(bytes, passphrase)
+            BackupRead(
+                preview = result.preview,
+                problems = result.problems,
+                canRestore = result.canRestore,
+                requiresPassphrase = result.requiresPassphrase,
+            )
+        },
+        replace = { bytes, passphrase ->
+            when (val outcome = restoreBackup.restore(bytes, passphrase)) {
+                is RestoreBackupUseCase.Outcome.Rejected -> RestoreVerdict.Rejected(
+                    outcome.problems.firstOrNull()?.message ?: "校验没通过",
+                )
 
-    /** 首页横幅里的那一句。分情况写清楚"现在生效的是哪一份数据"。 */
-    val restoreRecoveryHeadline: String?
-        get() = when (restoreRecovery?.kind) {
-            null -> null
-            RestoreRecoveryKind.ROLLED_BACK ->
-                "上次恢复在写新数据时被打断：本机数据一个字节没动"
-            RestoreRecoveryKind.ROLLED_BACK_AFTER_SWAP ->
-                "上次恢复在切换途中被打断：已经把原来的数据放回去了"
-            RestoreRecoveryKind.ROLLED_FORWARD ->
-                "上次恢复在切换途中被打断：备份里的数据已经接上，现在生效的就是它"
-            RestoreRecoveryKind.ALREADY_DONE ->
-                "上次恢复其实已经完成，只是没来得及收尾 —— 现在生效的就是备份里的数据"
-            RestoreRecoveryKind.DATA_MISSING ->
-                "上次恢复被打断，而且数据目录不见了 —— 需要你手动处理（详情在备份页）"
-            RestoreRecoveryKind.JOURNAL_UNREADABLE ->
-                "发现一份读不懂的恢复日志：本机数据没有被改动，详情在备份页"
-            RestoreRecoveryKind.RECOVERY_FAILED ->
-                "上次恢复被打断，但收拾现场时出错了 —— 本机数据没被改动，详情在备份页"
+                is RestoreBackupUseCase.Outcome.Ok -> RestoreVerdict.Done(
+                    filesWritten = outcome.outcome.filesWritten,
+                    banks = outcome.preview.manifest.counts.banks,
+                    attempts = outcome.preview.manifest.counts.attempts,
+                    notes = outcome.preview.manifest.counts.notes,
+                    previousLocation = outcome.outcome.previousLocation,
+                    payloadPaths = outcome.payloadPaths,
+                )
+            }
+        },
+        banks = { banks },
+        attemptCount = { review.rawAttempts.size },
+        noteCount = { notes.size },
+        decisionCount = { review.decisionCount },
+        initialRecovery = deps.restoreRecovery,
+    )
+
+    fun openBackup() {
+        screen = Screen.BACKUP
+        backup.enter()
+        // 进来就重读一遍并跑一次自检：这一页的每个数字（几个题库、多大、图在不在）
+        // 都必须来自"现在"，而不是上一次打开时的那份内存。
+        scope.launch {
+            backup.working {
+                loadAll()
+                runBackupAudit()
+            }
         }
-
-    /** 需要用户动手的几种才用错误色，其余是"已经处理好了"的中性通知。 */
-    val restoreRecoveryIsError: Boolean
-        get() = when (restoreRecovery?.kind) {
-            RestoreRecoveryKind.DATA_MISSING,
-            RestoreRecoveryKind.JOURNAL_UNREADABLE,
-            RestoreRecoveryKind.RECOVERY_FAILED,
-            -> true
-            else -> false
-        }
-
-    fun dismissRestoreRecovery() {
-        restoreRecovery = null
-        restoreRecoveryAnnounced = true
     }
 
-    /**
-     * 刚导出的那份备份。留着是为了让用户**当场核对**：文件名、大小、摘要。
-     * 摘要不落盘、不记住 —— 它只在这一屏有意义（"和另一台机器上那份是不是同一份"）。
-     */
-    var backupExport by mutableStateOf<BackupExportInfo?>(null)
-        private set
+    fun closeBackup() {
+        backup.leave()
+        screen = Screen.HOME
+    }
 
-    /**
-     * 已读入、还没确认的备份。
-     *
-     * [bytes] 留着是因为"确认恢复"要用的就是这一份 —— 重新读一遍文件，
-     * 用户中途换了文件就会恢复成另一份东西，那种意外不该发生。
-     */
-    var backupIntake by mutableStateOf<BackupIntake?>(null)
-        private set
-
-    var backupBusy by mutableStateOf(false)
-        private set
-
-    /**
-     * 最后一次引用自检的结果。
-     *
-     * 它不写进备份文件：一份备份里的"自检结论"是**导出那一刻**的判断，
-     * 而用户是在恢复之后才看它 —— 中间可能过了半年、装过别的题库。
-     * 把过期结论塞进文件，等于让人拿一句旧话当现在的事实。宁可每次重算。
-     */
-    var backupAudit by mutableStateOf<ReferenceAudit?>(null)
-        private set
-
-    /** 自检是什么时候跑的。界面要写"刚才核对的"而不是让人以为它一直实时。 */
-    var backupAuditAtMillis by mutableStateOf<Long?>(null)
-        private set
+    /** 页面上的"重新核对"。先重读一遍数据，否则核对的是一份可能已经过期的内存。 */
+    fun recheckBackupAudit() {
+        scope.launch {
+            backup.working {
+                loadAll()
+                runBackupAudit()
+            }
+        }
+    }
 
     /**
      * 跑一次引用自检。
@@ -1001,353 +966,130 @@ class AppController(
      * [paths] 是"这份数据的文件集合"：导出时传打包进去的那些，恢复时传写进去的那些。
      * 传 null 表示用当前磁盘上的清单（页面上的"重新核对"走这条）。
      * 给不出清单的平台会退回 null，媒体检查因此跳过 —— 而不是把每张图都报成缺失。
+     *
+     * 算完递给备份控制器：这里同时拿得到题库、合并后的图谱、笔记、扩展包与历史，
+     * 而"这份结论属于哪一屏、什么时候该作废"是备份页自己的事。
      */
     private suspend fun runBackupAudit(paths: Set<String>? = null) {
         val available = paths ?: deps.vault.listPaths()
-        backupAudit = auditReferences(
-            banks = banks,
-            graph = graph.merged,
-            notes = notes,
-            extensions = extensions,
-            history = review.rawAttempts,
-            availablePaths = available,
+        backup.reportAudit(
+            auditReferences(
+                banks = banks,
+                graph = graph.merged,
+                notes = notes,
+                extensions = extensions,
+                history = review.rawAttempts,
+                availablePaths = available,
+            ),
         )
-        backupAuditAtMillis = deps.clock.nowMillis()
     }
 
-    /** 页面上的"重新核对"。先重读一遍数据，否则核对的是一份可能已经过期的内存。 */
-    fun recheckBackupAudit() {
-        scope.launch {
-            backupBusy = true
-            loadAll()
-            runBackupAudit()
-            backupBusy = false
-        }
-    }
-
-    fun dismissBackupAudit() {
-        backupAudit = null
-        backupAuditAtMillis = null
-    }
-
-    /**
-     * 恢复时用户输过的口令。
-     *
-     * 留在内存里，是因为"解锁看看"和"确认恢复"是两次读同一份字节的动作 ——
-     * 不留下它，用户每点一次都要重新输一遍，还要再等一次 600000 轮派生。
-     *
-     * 生命周期很短：取消、恢复完成、换一份文件、离开页面都会清空。
-     * **不落盘、不进日志、不写清单**（清单里只有盐和迭代次数）。
-     */
-    var backupUnlockPassphrase by mutableStateOf("")
-        private set
-
-    // ---- 导出表单（加密是可选项，默认关）----
-
-    /**
-     * 导出表单的状态放在控制器里，不放界面里。
-     *
-     * 理由不是"方便测试"，而是：放在 `remember` 里，用户切到别的页面再回来，
-     * 输了一半的口令会静默消失，而"勾着加密但口令空了"这种状态最难解释。
-     */
-    var backupEncrypt by mutableStateOf(false)
-        private set
-
-    var backupExportPassphrase by mutableStateOf("")
-        private set
-
-    var backupExportConfirm by mutableStateOf("")
-        private set
-
-    /** "我知道忘记口令就打不开"。必须由用户自己点，不能预勾。 */
-    var backupExportAck by mutableStateOf(false)
-        private set
-
-    fun toggleBackupEncrypt() {
-        backupEncrypt = !backupEncrypt
-        if (!backupEncrypt) clearExportPassphrase()
-    }
-
-    fun updateBackupExportPassphrase(value: String) {
-        backupExportPassphrase = value
-    }
-
-    fun updateBackupExportConfirm(value: String) {
-        backupExportConfirm = value
-    }
-
-    fun updateBackupExportAck(value: Boolean) {
-        backupExportAck = value
-    }
-
-    /** 口令从界面上抹掉，但不关加密开关：用户可能只是想重输一次。 */
-    private fun clearExportPassphrase() {
-        backupExportPassphrase = ""
-        backupExportConfirm = ""
-        backupExportAck = false
-    }
-
-    /**
-     * 现在能不能点"导出"。返回 null = 能点，否则是**不能点的原因**。
-     *
-     * 界面直接显示这句话，控制器在 [exportBackup] 里再查一次同样的规则 ——
-     * 不是为了防用户，是为了让"按钮灰着但不说为什么"这种状态不可能出现。
-     */
-    val backupExportBlockReason: String?
-        get() = when {
-            !backupCanExport -> "当前平台不能保存文件"
-            backupSummary.isEmpty -> "先导入一个题库，再来备份"
-            !backupEncrypt -> null
-            backupExportPassphrase.length < BackupCryptoIds.MIN_PASSPHRASE_CHARS ->
-                "口令至少 ${BackupCryptoIds.MIN_PASSPHRASE_CHARS} 个字符"
-            backupExportPassphrase != backupExportConfirm -> "两次口令不一致"
-            !backupExportAck -> "先确认「忘记口令就打不开」"
-            else -> null
-        }
-
-    val backupSupported: Boolean get() = deps.vault.isSupported
-
-    val backupUnavailableReason: String?
-        get() = when {
-            !deps.vault.isSupported -> deps.vault.unsupportedReason
-            else -> null
-        }
-
-    /** 导出还额外要求"能把文件写出去"：能读不能写的平台不该出现导出按钮。 */
-    val backupCanExport: Boolean get() = deps.vault.isSupported && deps.filePicker.canSave
-
-    val backupDataLocation: String get() = deps.vault.locationLabel
-
-    /** 本机数据概况。不读文件、不打包，只是把已经载入的账报一遍。 */
-    val backupSummary: BackupSummary
-        get() = BackupSummary(
-            banks = banks.size,
-            questions = banks.sumOf { it.questions.size },
-            attempts = review.rawAttempts.size,
-            notes = notes.size,
-            reviews = review.decisionCount,
-        )
-
-    fun openBackup() {
-        screen = Screen.BACKUP
-        backupIntake = null
-        backupUnlockPassphrase = ""
-        // 进来就重读一遍并跑一次自检：这一页的每个数字（几个题库、多大、图在不在）
-        // 都必须来自"现在"，而不是上一次打开时的那份内存。
-        scope.launch {
-            backupBusy = true
-            loadAll()
-            runBackupAudit()
-            backupBusy = false
-        }
-    }
-
-    fun closeBackup() {
-        backupIntake = null
-        backupExport = null
-        backupUnlockPassphrase = ""
-        // 离开这一页就把口令抹掉；加密开关也回到"关"，下次进来重新决定。
-        backupEncrypt = false
-        clearExportPassphrase()
-        screen = Screen.HOME
-    }
-
-    /**
-     * 导出：先在内存里打包，再让用户选位置写出去。取消保存不算失败。
-     *
-     * 要不要加密、用什么口令，都从当前表单状态读（[backupEncrypt] / [backupExportPassphrase]）。
-     * 口令只在这一步用一次，**打包完成立刻从状态里清掉**：
-     * 加密备份的意义是"只有我知道口令"，软件自己一直存着就等于没有加密。
-     */
     fun exportBackup() {
-        val blocked = backupExportBlockReason
-        if (blocked != null) {
-            banner = Banner(blocked, isError = true)
-            return
-        }
-        val secret = backupExportPassphrase.takeIf { backupEncrypt && it.isNotEmpty() }
-        if (secret != null && secret != secret.trim()) {
-            banner = Banner("口令首尾不要有空格 —— 空格也算口令的一部分，很容易输漏", isError = true)
-            return
-        }
-        scope.launch {
-            backupBusy = true
-            when (val outcome = createBackup.create(secret)) {
-                is BackupExportOutcome.Failed -> banner = Banner(outcome.message, isError = true)
-                is BackupExportOutcome.Ok -> {
-                    val bundle = outcome.bundle
-                    try {
-                        val saved = deps.filePicker.saveFile(bundle.fileName, bundle.bytes)
-                        if (saved) {
-                            backupExport = BackupExportInfo(
-                                fileName = bundle.fileName,
-                                bytes = bundle.bytes.size.toLong(),
-                                digest = bundle.contentDigest,
-                                createdAtMillis = bundle.manifest.createdAtMillis,
-                                // 加密备份的清单里没有文件明细，数量从统计里拿
-                                fileCount = bundle.manifest.counts.totalFiles,
-                                encrypted = bundle.encrypted,
-                            )
-                            // 自检的是**真正打包进去的那份文件清单**，不是"此刻磁盘上有什么"：
-                            // 两者之间隔着一次打包，结论必须对着包里那份说。
-                            runBackupAudit(bundle.payloadPaths)
-                            val auditLine = backupAudit?.let { "引用自检：${it.summary}。" }.orEmpty()
-                            banner = if (bundle.encrypted) {
-                                Banner(
-                                    "已导出加密备份：${bundle.fileName}（${bundle.manifest.counts.totalFiles} 个文件）。" +
-                                        "口令只有你知道：忘记就打不开，软件没有找回方式。" + auditLine,
-                                    isError = false,
-                                )
-                            } else {
-                                Banner(
-                                    "已导出备份：${bundle.fileName}（${bundle.manifest.counts.totalFiles} 个文件）。" +
-                                        "备份没有加密，别放到公共网盘或聊天记录里。" + auditLine,
-                                    isError = false,
-                                )
-                            }
-                        } else {
-                            banner = Banner("已取消保存", isError = false)
-                        }
-                    } catch (e: FilePickException) {
-                        banner = Banner(e.message ?: "保存失败", isError = true)
-                    }
-                    // 不管存没存成，口令都从界面状态里抹掉；要不要再导出让用户重新输。
-                    clearExportPassphrase()
+        scope.launch { announceBackupExport(backup.export()) }
+    }
+
+    /** 导出之后要顺带重跑一次自检（对着包里那份清单），所以它本身得在协程里。 */
+    private suspend fun announceBackupExport(verdict: BackupExportVerdict) {
+        when (verdict) {
+            is BackupExportVerdict.Blocked -> banner = Banner(verdict.message, isError = true)
+            is BackupExportVerdict.Failed -> banner = Banner(verdict.message, isError = true)
+            BackupExportVerdict.Cancelled -> banner = Banner("已取消保存", isError = false)
+            is BackupExportVerdict.Saved -> {
+                // 自检的是**真正打包进去的那份文件清单**，不是"此刻磁盘上有什么"：
+                // 两者之间隔着一次打包，结论必须对着包里那份说。
+                runBackupAudit(verdict.payloadPaths)
+                val auditLine = backup.audit?.let { "引用自检：${it.summary}。" }.orEmpty()
+                val info = verdict.info
+                banner = if (info.encrypted) {
+                    Banner(
+                        "已导出加密备份：${info.fileName}（${info.fileCount} 个文件）。" +
+                            "口令只有你知道：忘记就打不开，软件没有找回方式。" + auditLine,
+                        isError = false,
+                    )
+                } else {
+                    Banner(
+                        "已导出备份：${info.fileName}（${info.fileCount} 个文件）。" +
+                            "备份没有加密，别放到公共网盘或聊天记录里。" + auditLine,
+                        isError = false,
+                    )
                 }
             }
-            backupBusy = false
         }
     }
 
     /** 选一份备份读进来：只读清单与校验，不动本机数据。 */
     fun pickBackupFile() {
-        scope.launch {
-            val picked = try {
-                deps.filePicker.pickBackup()
-            } catch (e: FilePickException) {
-                banner = Banner(e.message ?: "读取文件失败", isError = true)
-                return@launch
-            } ?: return@launch
-            intakeBackupBytes(picked.name, picked.bytes)
-        }
+        scope.launch { announceBackupIntake(backup.pick()) }
     }
 
-    /** 拖拽进来的 `.qbk`：与"选文件"走同一条路，只是没有名字。 */
+    /** 拖拽进来的 `.qbk`：与"选文件"走同一条路，只是没有对话框。 */
     fun intakeBackupBytes(name: String, bytes: ByteArray) {
-        backupBusy = true
-        backupUnlockPassphrase = ""
-        val read = inspectBackup.inspect(bytes)
-        val intake = BackupIntake(
-            name = name,
-            bytes = bytes,
-            preview = read.preview,
-            problems = read.problems,
-            canRestore = read.canRestore,
-            requiresPassphrase = read.requiresPassphrase,
-        )
-        backupIntake = intake
-        when {
+        announceBackupIntake(backup.accept(name, bytes))
+    }
+
+    private fun announceBackupIntake(verdict: BackupIntakeVerdict) {
+        when (verdict) {
+            // 用户什么都没选：不导航，也不留一句"你取消了"。
+            BackupIntakeVerdict.Cancelled -> return
+            is BackupIntakeVerdict.Failed -> banner = Banner(verdict.message, isError = true)
             // 加密备份：这不是失败，下一步是输口令。用普通提示而不是红条。
-            intake.requiresPassphrase -> banner = Banner("已读入一份加密备份：输入口令后可以看到里面有什么", isError = false)
-            !intake.canRestore -> banner =
-                Banner("这份备份不能用：${intake.problems.firstOrNull()?.message ?: "校验没通过"}", isError = true)
+            BackupIntakeVerdict.NeedsPassphrase ->
+                banner = Banner("已读入一份加密备份：输入口令后可以看到里面有什么", isError = false)
+            is BackupIntakeVerdict.Unusable ->
+                banner = Banner("这份备份不能用：${verdict.message}", isError = true)
+            // 明文且校验通过：清单已经摊开了，不需要再多说一句
+            BackupIntakeVerdict.Ready -> Unit
         }
         screen = Screen.BACKUP
-        backupBusy = false
     }
 
-    /**
-     * 用口令解锁一份加密备份。
-     *
-     * 失败时**只说"解不开"**，不猜是口令错还是文件被改 —— GCM 分不出这两件事，
-     * 硬说"口令错误"会让拿到坏文件的人一直重试口令。
-     */
     fun unlockBackup(passphrase: String) {
-        val intake = backupIntake ?: return
-        if (passphrase.isBlank()) {
-            banner = Banner("先输入口令", isError = true)
-            return
-        }
         scope.launch {
-            backupBusy = true
-            val read = inspectBackup.inspect(intake.bytes, passphrase)
-            backupBusy = false
-            if (read.canRestore) {
-                backupUnlockPassphrase = passphrase
-                backupIntake = intake.copy(
-                    preview = read.preview,
-                    problems = read.problems,
-                    canRestore = true,
-                    requiresPassphrase = false,
-                )
-                val counts = read.preview?.manifest?.counts
-                banner = Banner(
-                    "已解锁：${counts?.banks ?: 0} 个题库、${counts?.attempts ?: 0} 条历史 —— 看清清单再决定要不要替换本机",
+            banner = when (val verdict = backup.unlock(passphrase)) {
+                is BackupUnlockVerdict.Unlocked -> Banner(
+                    "已解锁：${verdict.banks} 个题库、${verdict.attempts} 条历史 —— 看清清单再决定要不要替换本机",
                     isError = false,
                 )
-            } else {
-                backupUnlockPassphrase = ""
-                backupIntake = intake.copy(
-                    preview = read.preview ?: intake.preview,
-                    problems = read.problems,
-                    canRestore = false,
-                    requiresPassphrase = read.requiresPassphrase,
-                )
-                banner = Banner(
-                    read.problems.firstOrNull()?.message ?: "这份备份解不开",
-                    isError = true,
-                )
+
+                is BackupUnlockVerdict.Failed -> Banner(verdict.message, isError = true)
             }
         }
-    }
-
-    fun cancelRestore() {
-        backupIntake = null
-        backupUnlockPassphrase = ""
     }
 
     /**
      * 确认恢复：整体替换本机数据，然后**重新读一遍全世界**。
      *
      * 恢复之后不重启、不弹"请重新打开应用"：仓储每次读都走存储层，
-     * 一次 [refresh] 就够了 —— 会话、笔记、图谱、扩展、AI 记录都在里面。
+     * 一次 [loadAll] 就够了 —— 会话、笔记、图谱、扩展、AI 记录都在里面。
      */
     fun confirmRestore() {
-        val intake = backupIntake ?: return
-        if (!intake.canRestore) return
-        val secret = backupUnlockPassphrase.takeIf { it.isNotEmpty() }
         scope.launch {
-            backupBusy = true
-            when (val outcome = restoreBackup.restore(intake.bytes, secret)) {
-                is RestoreBackupUseCase.Outcome.Rejected -> {
-                    banner = Banner(
-                        "没有恢复：${outcome.problems.firstOrNull()?.message ?: "校验没通过"}",
-                        isError = true,
-                    )
-                }
+            when (val verdict = backup.restore()) {
+                is RestoreVerdict.Rejected -> banner = Banner(
+                    "没有恢复：${verdict.message}",
+                    isError = true,
+                )
 
-                is RestoreBackupUseCase.Outcome.Ok -> {
-                    backupIntake = null
-                    backupExport = null
-                    backupUnlockPassphrase = ""
-                    loadAll()
-                    // 总纲说的"最后解析引用"就是这一句：数据落地之后，
-                    // 拿刚写进去的那份文件清单核对一遍，告诉用户"有没有东西没接上"。
-                    runBackupAudit(outcome.payloadPaths)
+                is RestoreVerdict.Done -> {
+                    backup.working {
+                        loadAll()
+                        // 总纲说的"最后解析引用"就是这一句：数据落地之后，
+                        // 拿刚写进去的那份文件清单核对一遍，告诉用户"有没有东西没接上"。
+                        runBackupAudit(verdict.payloadPaths)
+                    }
                     screen = Screen.HOME
-                    val where = outcome.outcome.previousLocation
+                    val where = verdict.previousLocation
                     banner = Banner(
-                        "已恢复 ${outcome.outcome.filesWritten} 个文件：" +
-                            "题库 ${outcome.preview.manifest.counts.banks}、" +
-                            "历史 ${outcome.preview.manifest.counts.attempts} 条、" +
-                            "笔记 ${outcome.preview.manifest.counts.notes} 条。 " +
-                            "引用自检：${backupAudit?.summary ?: "没有核对"}。" +
+                        "已恢复 ${verdict.filesWritten} 个文件：" +
+                            "题库 ${verdict.banks}、" +
+                            "历史 ${verdict.attempts} 条、" +
+                            "笔记 ${verdict.notes} 条。 " +
+                            "引用自检：${backup.audit?.summary ?: "没有核对"}。" +
                             (if (where != null) " 原来的数据已移到 $where，需要退回去就把它改回原位" else ""),
                         isError = false,
                     )
                 }
             }
-            backupBusy = false
         }
     }
 

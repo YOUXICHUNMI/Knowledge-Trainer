@@ -33,7 +33,7 @@ import morefish.knowledge.trainer.domain.backup.BackupCryptoIds
 import morefish.knowledge.trainer.domain.backup.BackupProblem
 import morefish.knowledge.trainer.domain.backup.RefGap
 import morefish.knowledge.trainer.presentation.AppController
-import morefish.knowledge.trainer.presentation.BackupIntake
+import morefish.knowledge.trainer.presentation.backup.BackupIntake
 import morefish.knowledge.trainer.presentation.theme.Palette
 import morefish.knowledge.trainer.presentation.ui.BannerHost
 import morefish.knowledge.trainer.presentation.ui.Divider
@@ -75,17 +75,17 @@ fun BackupScreen(controller: AppController) {
         BannerHost(controller.banner) { controller.dismissBanner() }
 
         // 上次恢复被打断：写在最上面，因为"现在生效的是哪一份数据"比什么都重要
-        if (controller.restoreRecovery != null) {
+        if (controller.backup.restoreRecovery != null) {
             RecoveryCard(controller)
             Spacer(Modifier.height(18.dp))
         }
 
-        if (!controller.backupSupported) {
+        if (!controller.backup.supported) {
             Panel(background = Palette.PanelMuted) {
                 Text("这个平台没有可备份的数据", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    controller.backupUnavailableReason ?: "数据不在磁盘上，关掉应用就会消失",
+                    controller.backup.unavailableReason ?: "数据不在磁盘上，关掉应用就会消失",
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.Muted,
                 )
@@ -131,8 +131,8 @@ fun BackupScreen(controller: AppController) {
  */
 @Composable
 private fun RecoveryCard(controller: AppController) {
-    val recovery = controller.restoreRecovery ?: return
-    val error = controller.restoreRecoveryIsError
+    val recovery = controller.backup.restoreRecovery ?: return
+    val error = controller.backup.recoveryIsError
     val title = when (recovery.kind) {
         RestoreRecoveryKind.ROLLED_BACK -> "上次恢复被打断：本机数据没被动过"
         RestoreRecoveryKind.ROLLED_BACK_AFTER_SWAP -> "上次恢复被打断：已经退回原来的数据"
@@ -204,7 +204,7 @@ private fun RecoveryCard(controller: AppController) {
             Text(detail, style = MaterialTheme.typography.bodySmall, color = Palette.Muted)
         }
         Spacer(Modifier.height(8.dp))
-        GhostButton("知道了", onClick = controller::dismissRestoreRecovery)
+        GhostButton("知道了", onClick = controller.backup::dismissRecovery)
     }
 }
 
@@ -222,15 +222,15 @@ private fun RecoveryCard(controller: AppController) {
  */
 @Composable
 private fun AuditPanel(controller: AppController) {
-    val audit = controller.backupAudit
-    val at = controller.backupAuditAtMillis
+    val audit = controller.backup.audit
+    val at = controller.backup.auditAtMillis
 
     SectionTitle("引用自检", at?.let { "核对于 ${formatStamp(it)}" })
     Spacer(Modifier.height(10.dp))
 
     if (audit == null) {
         Panel(background = Palette.PanelMuted) {
-            if (controller.backupBusy) {
+            if (controller.backup.busy) {
                 Text("正在核对引用…", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -260,7 +260,7 @@ private fun AuditPanel(controller: AppController) {
             SecondaryButton(
                 "核对一次",
                 onClick = controller::recheckBackupAudit,
-                enabled = !controller.backupBusy,
+                enabled = !controller.backup.busy,
             )
         }
         return
@@ -349,10 +349,10 @@ private fun AuditPanel(controller: AppController) {
             SecondaryButton(
                 "重新核对",
                 onClick = controller::recheckBackupAudit,
-                enabled = !controller.backupBusy,
+                enabled = !controller.backup.busy,
             )
             Spacer(Modifier.width(10.dp))
-            GhostButton("收起", onClick = controller::dismissBackupAudit)
+            GhostButton("收起", onClick = controller.backup::dismissAudit)
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -395,13 +395,13 @@ private const val AUDIT_MAX_ROWS = 5
 
 @Composable
 private fun ExportPanel(controller: AppController) {
-    val summary = controller.backupSummary
-    val exported = controller.backupExport
+    val summary = controller.backup.summary
+    val exported = controller.backup.exported
 
-    val encrypt = controller.backupEncrypt
-    val passphrase = controller.backupExportPassphrase
-    val confirm = controller.backupExportConfirm
-    val acknowledged = controller.backupExportAck
+    val encrypt = controller.backup.encrypt
+    val passphrase = controller.backup.exportPassphrase
+    val confirm = controller.backup.exportConfirm
+    val acknowledged = controller.backup.exportAck
 
     val minChars = BackupCryptoIds.MIN_PASSPHRASE_CHARS
     val tooShort = passphrase.length < minChars
@@ -424,7 +424,7 @@ private fun ExportPanel(controller: AppController) {
         )
         Spacer(Modifier.height(2.dp))
         Text(
-            "数据位置：${controller.backupDataLocation}",
+            "数据位置：${controller.backup.dataLocation}",
             style = MaterialTheme.typography.bodySmall,
             color = Palette.Faint,
             maxLines = 1,
@@ -436,8 +436,8 @@ private fun ExportPanel(controller: AppController) {
             KtChip(
                 label = if (encrypt) "加密：开" else "加密：关",
                 selected = encrypt,
-                onClick = { controller.toggleBackupEncrypt() },
-                enabled = !controller.backupBusy,
+                onClick = { controller.backup.toggleEncrypt() },
+                enabled = !controller.backup.busy,
             )
             Spacer(Modifier.width(10.dp))
             Text(
@@ -451,7 +451,7 @@ private fun ExportPanel(controller: AppController) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = passphrase,
-                onValueChange = controller::updateBackupExportPassphrase,
+                onValueChange = controller.backup::updateExportPassphrase,
                 label = { Text("口令（至少 $minChars 个字符）") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
@@ -462,7 +462,7 @@ private fun ExportPanel(controller: AppController) {
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = confirm,
-                onValueChange = controller::updateBackupExportConfirm,
+                onValueChange = controller.backup::updateExportConfirm,
                 label = { Text("再输一次") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
@@ -485,7 +485,7 @@ private fun ExportPanel(controller: AppController) {
             KtChip(
                 label = if (acknowledged) "我知道：忘记口令就打不开" else "请确认：忘记口令就打不开",
                 selected = acknowledged,
-                onClick = { controller.updateBackupExportAck(!acknowledged) },
+                onClick = { controller.backup.updateExportAck(!acknowledged) },
             )
         }
 
@@ -493,17 +493,17 @@ private fun ExportPanel(controller: AppController) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             PrimaryButton(
                 text = when {
-                    controller.backupBusy && encrypt -> "正在加密打包…"
-                    controller.backupBusy -> "正在打包…"
+                    controller.backup.busy && encrypt -> "正在加密打包…"
+                    controller.backup.busy -> "正在打包…"
                     encrypt -> "导出加密备份"
                     else -> "导出备份"
                 },
                 onClick = controller::exportBackup,
-                enabled = !controller.backupBusy && controller.backupExportBlockReason == null,
+                enabled = !controller.backup.busy && controller.backup.exportBlockReason == null,
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                controller.backupExportBlockReason ?: "打包后会让选保存位置",
+                controller.backup.exportBlockReason ?: "打包后会让选保存位置",
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Faint,
             )
@@ -629,8 +629,8 @@ private fun EncryptedBadge() {
 
 @Composable
 private fun RestorePanel(controller: AppController) {
-    val intake = controller.backupIntake
-    val summary = controller.backupSummary
+    val intake = controller.backup.intake
+    val summary = controller.backup.summary
 
     SectionTitle("恢复", if (intake == null) "会整体替换本机数据" else null)
     Spacer(Modifier.height(10.dp))
@@ -649,13 +649,13 @@ private fun RestorePanel(controller: AppController) {
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             SecondaryButton(
-                text = if (controller.backupBusy) "读取中…" else "选择备份文件",
+                text = if (controller.backup.busy) "读取中…" else "选择备份文件",
                 onClick = controller::pickBackupFile,
-                enabled = !controller.backupBusy,
+                enabled = !controller.backup.busy,
             )
             if (intake != null) {
                 Spacer(Modifier.width(10.dp))
-                GhostButton("取消", onClick = controller::cancelRestore)
+                GhostButton("取消", onClick = controller.backup::cancelRestore)
             }
         }
 
@@ -769,9 +769,9 @@ private fun IntakeCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 SecondaryButton(
-                    text = if (controller.backupBusy) "解锁中…" else "解锁",
+                    text = if (controller.backup.busy) "解锁中…" else "解锁",
                     onClick = { controller.unlockBackup(passphrase) },
-                    enabled = !controller.backupBusy && passphrase.isNotEmpty(),
+                    enabled = !controller.backup.busy && passphrase.isNotEmpty(),
                 )
             }
             // "还没给口令"不算失败，别把它打成红字。
@@ -817,9 +817,9 @@ private fun IntakeCard(
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SecondaryButton(
-                    text = if (controller.backupBusy) "正在恢复…" else "用这份备份替换本机数据",
+                    text = if (controller.backup.busy) "正在恢复…" else "用这份备份替换本机数据",
                     onClick = controller::confirmRestore,
-                    enabled = !controller.backupBusy,
+                    enabled = !controller.backup.busy,
                 )
                 Spacer(Modifier.width(12.dp))
                 Text("本机现有数据会被移到旁边的目录，不删除", style = MaterialTheme.typography.bodySmall, color = Palette.Faint)

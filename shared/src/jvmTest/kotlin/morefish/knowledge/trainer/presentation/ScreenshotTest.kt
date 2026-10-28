@@ -1214,10 +1214,10 @@ class ScreenshotTest {
         shot("45-backup-overview", height = 884) { AppContent(controller) }
 
         // ---- 加密：开关打开、输两次口令、勾确认之后按钮才是可点的
-        controller.toggleBackupEncrypt()
-        controller.updateBackupExportPassphrase("备份口令-海豚毛线九月")
-        controller.updateBackupExportConfirm("备份口令-海豚毛线九月")
-        controller.updateBackupExportAck(true)
+        controller.backup.toggleEncrypt()
+        controller.backup.updateExportPassphrase("备份口令-海豚毛线九月")
+        controller.backup.updateExportConfirm("备份口令-海豚毛线九月")
+        controller.backup.updateExportAck(true)
         shot("49-backup-encrypt-export", height = 1140) { AppContent(controller) }
 
         controller.exportBackup()
@@ -1232,9 +1232,9 @@ class ScreenshotTest {
         shot("52-backup-unlocked", height = 1572) { AppContent(controller) }
 
         // ---- 不加密：同一页的另一半（关掉开关会顺带清掉口令）
-        controller.cancelRestore()
+        controller.backup.cancelRestore()
         controller.dismissBanner()
-        controller.toggleBackupEncrypt()
+        controller.backup.toggleEncrypt()
         controller.exportBackup()
         shot("46-backup-exported", height = 1082) { AppContent(controller) }
 

@@ -192,7 +192,7 @@ fun HomeScreen(controller: AppController) {
                 )
                 // 只在数据真的落在磁盘上的平台出现：Web / iOS 关掉应用就没了，
                 // 那里给一个"备份"按钮等于承诺一件做不到的事。
-                if (controller.backupSupported) {
+                if (controller.backup.supported) {
                     SecondaryButton("备份", onClick = controller::openBackup, leading = "⇩")
                 }
             }

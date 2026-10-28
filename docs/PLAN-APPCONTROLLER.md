@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 1949 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247 → 1949） |
+| `AppController.kt` | 1691 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716 → 2530 → 2476 → 2247 → 1949 → 1691） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，622 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，623 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -36,7 +36,7 @@ presentation/
   importing/ImportController.kt    ✅ 已拆
   practice/PracticeController.kt  ✅ 已拆
   graph/GraphController.kt      ✅ 已拆
-  backup/BackupController.kt
+  backup/BackupController.kt    ✅ 已拆
 ```
 
 ## 三条硬规则
@@ -73,7 +73,7 @@ presentation/
 | 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | ✅ 已完成 |
 | 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | ✅ 已完成 |
 | 10 | 个人知识图谱 | ~429 | `GraphScreen` | ✅ 已完成 |
-| 11 | 备份与迁移（.qbk） | ~437 | `BackupScreen` | 待做 |
+| 11 | 备份与迁移（.qbk） | ~437 | `BackupScreen` | ✅ 已完成 |
 
 排序理由：先做"读写独立性高、只被一个界面使用"的部分，积累套路；
 练习与备份涉及会话恢复、媒体重建、题库整体替换，放最后。
@@ -332,3 +332,32 @@ presentation/
 - 新增用例 `deletingAnEdgeFromTheListRefreshesTheListAndStaysThere`：列表页删完必须留在列表，
   而且"解析过的那一帧"要跟着变 —— 模型空了视图没空，界面上就会留着一行已经不存在的关系。
 - 文件从 2247 行降到 1949 行；621 → 622 用例全绿，行为不变。
+
+## 已完成的第十一刀（备份与迁移）
+
+- 新增 `presentation/backup/BackupController.kt`（569 行）：导出表单与三条规则、读入 / 解锁、
+  待确认状态、恢复、引用自检的结论与时间、上次恢复被打断的那条通知，以及"忙"标记。
+- 三个视图类型跟着搬：`BackupSummary` / `BackupExportInfo` / `BackupIntake` 从组合根挪进
+  `presentation/backup`，`AppController.kt` 从此不再定义备份类型。
+- **这一刀的核心问题是分层，不是行数。** 三个用例的返回类型（`BackupBundle`、`BackupReadResult`）
+  来自 `infrastructure`，而子控制器不许认识 `infrastructure` —— 于是把用例留在这里、包成
+  lambda 递进去，并且**在递进去之前就把容器摘成 `PackedBackup` / `BackupRead`**。
+  这一步"摘字段"本来也只有组合根能做：它是唯一允许挑具体实现的地方。
+  架构测试的白名单因此仍然只有 `AppController.kt` 一条。
+- **写盘结果做成返回值**：`BackupExportVerdict.Saved / Cancelled / Failed / Blocked`。
+  导出成功之后要顺带重跑一次引用自检，而自检要拿"真正打包进去的那份文件清单"去核对整库 ——
+  那是组合根的事，所以 `Saved` 里带着 `payloadPaths`。
+- **恢复只回结论，不负责重读世界**：`RestoreVerdict.Done` 带上"写了几个文件、旧数据去了哪、
+  写进去的清单"，`loadAll()` 与自检留给组合根 —— 与历史页 `update(history)`、
+  练习页 `reportBlockedDependencies(n)` 同一套做法：全局的事归组合根，这一屏的事归子控制器。
+- **一次性通知的"只说一次"也搬了**（`takeRecoveryNotice()`）：横幅位归谁由组合根定
+  （可能被更要紧的加载警告占着），说没说过由控制器记 —— 让调用点自己管 `announced` 标记，
+  一定会有人忘了置位。
+- `working { }` 收掉四处手写的 `busy = true / false`：打包、解锁、恢复、重读自检都会抛异常
+  （磁盘满、文件被删），漏写 `finally` 的那一处会让界面永远停在"正在恢复…"。
+- 调用方：`BackupScreen` 约 30 处、`HomeScreen` 1、`BackupFlowTest` 45、`ScreenshotTest` 6。
+- 新增用例 `leavingTheBackupPageForgetsTheUnlockedPassphrase`：解锁之后不恢复、直接返回，
+  口令、待确认的备份、加密开关必须一起消失。这条钉的正是"两边都对才抹得掉"的分界。
+- 文件从 1949 行降到 1691 行；622 → 623 用例全绿，行为不变。
+- **计划完成**：11 个关注点全部拆完，组合根从 3371 行降到 1691 行（-50%），
+  用例从 601 涨到 623。
