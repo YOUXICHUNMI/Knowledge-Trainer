@@ -14,7 +14,9 @@ release APK 9.7 MB 未签名），桌面端 exe 实测可启动；
 
 之后又走了三刀：CI 把回归清单收成一份（第 1 节）、组合根从 3371 行拆到 1622 行（第 2–14 节）、
 深色主题从"只有浅色"变成两套成套配色 + 像素护栏（第 18 节）。最近这一刀把 74 张截图
-也搬进 CI（第 19 节），并顺手证明了**"job 绿着但一张图没拍"有三种走法**。
+也搬进 CI（第 19 节）：先证明了**"job 绿着但一张图没拍"有两种走法**（UP-TO-DATE 与 FROM-CACHE），再推上去真跑 ——
+首轮三个 job 全红（`gradlew` 丢了可执行位、`media/index.ndjson` 在 Windows 上被检出成 CRLF
+导致 Linux 重建字节不同），修完之后三个 job 全绿，截图 artifact 也下载回来逐张看过。
 
 ## P10-1 架构验收：把"依赖只能指向内层"变成测试
 
@@ -623,8 +625,40 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 
 两样渲染前提写进了 job：`libgl1`（skiko 的 Linux 原生库会 dlopen `libGL.so.1`）与
 `fonts-noto-cjk`（界面全是中文，缺字体拍出来是豆腐块，那样的产物等于没拍）。
-**这一段是推断，还没在真实 runner 上跑过** —— 红了先看报错是 `libGL.so.1` 找不到还是字体，
-再决定要不要补 `xvfb`。
+
+### 真跑了两轮：首轮三个 job 全红，两个根因都不是 CI 配置
+
+这台机器一直没推过（main 领先 27 个提交），所以 2026-10-28 这次是**工作流第一次在真实 runner 上跑**。
+首轮 `40670881743`：`toolchain`、`jvm-tests`、`screenshots` 三个全红。两个根因都在仓库里，不在 YAML 里：
+
+**① `./gradlew: Permission denied`（exit 126）—— 三个 job 同一个死法。**
+索引里 `gradlew` 是 `100644`：在 Windows 上提交时从来没带过 +x，本地一直是靠 shell 忽略权限位跑起来的，
+所以"本地能跑"这件事完全没暴露它。`git update-index --chmod=+x gradlew` 补回。
+顺带确认了那批 Python 脚本不需要：`selfcheck.py` 的 `run()` 统一用 `[sys.executable] + args` 起子进程。
+
+**② `随附包与现场打包一致：advanced.qbank` 在 Linux 上必红，而且只有 advanced 一条。**
+本机 `core.autocrlf=true`，`advanced-authoring/media/index.ndjson` 被检出成 CRLF（索引里是 LF），
+用它打出来的 `.qbank` 里就带着 `\r\n`。于是 Windows 上"随附包 == 现场打包"永远成立（两边都是 CRLF），
+Linux 上用 LF 重建必然不同；minimal 没有 `media/`，所以它是绿的 —— 这也解释了为什么只失败一条。
+修法不是在 CI 里迁就，而是**把换行规则写进仓库**：`.gitattributes`（`* text=auto eol=lf`，
+`.qbank/.apk/.msi/.ico/.png/.jpg` 标 binary，`gradlew.bat` 留 CRLF），再把工作区里 55 个被 autocrlf
+改过的文本文件按 LF 重检，最后用 LF 源重打两个随附包并重出校验报告（advanced 的 digest 与内容摘要
+随之变化，这是预期的）。
+
+修完第二轮 `40672228922`：`toolchain`、`jvm-tests`、`screenshots` **三个全绿**，截图 job 用时 4 分 17 秒，
+`核对张数` 那一步报的是 74/74。
+
+### 绿灯之后还得把图下载下来看
+
+"张数对"只证明拍了 74 个文件，不证明这些文件能看 —— 缺 CJK 字体时文字会变成豆腐块，
+而**没有任何断言会因此失败**（像素护栏只看"有没有整块发亮"，豆腐块是浅色的规整方块，反而过得更轻松）。
+所以把 artifact 下载回来逐张抽查了：`01-home`（浅色首页）与 `58-history-dark`（深色历史）
+中文都是正常字形，深色页墨底浅字、判定色清楚，与本地渲染一致。
+
+一处**必须写下来的差别**：拉丁文字的字体不一样。Linux 上没有 Windows 那套字体，
+fontconfig 做了替换，标题 "Knowledge Trainer" 与正文里的 "SQLite"、"Kotlin" 明显更粗更方。
+所以 CI 的图适合核对**版面、间距、配色、溢出**，不适合核对字重与字形细节；
+要判断"字看起来对不对"仍然得在本机看。
 
 ## 已知限制（P10 之后仍然成立）
 
@@ -636,11 +670,12 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 664 用例 + 主分支截图），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑、`screenshots` job 的 `libgl1` / CJK 字体假设成不成立，都要等首次运行确认 |
+| CI 只跑通了三档 | 2026-10-28 首轮全红（gradlew 权限位、CRLF），修后 `toolchain` / `jvm-tests` / `screenshots` 三个 job 全绿；`android` 与 `desktop` 仍只声明在 `workflow_dispatch` 里，**一次都没在 runner 上跑过** —— 它们要拉 SDK 与 WiX，失败点不可预知 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 | 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
-| 像素护栏只有三页常驻 | `DarkSurfaceTest` 只渲染练习 / 导入 / 历史，每次 `:shared:jvmTest` 都跑；全量 74 张那条要 `KT_SHOTS=1`，只在 push 到主分支的 `screenshots` job 里跑（PR 上没有）。且这个 job 还没在真实 runner 上跑过 |
+| 像素护栏只有三页常驻 | `DarkSurfaceTest` 只渲染练习 / 导入 / 历史，每次 `:shared:jvmTest` 都跑；全量 74 张那条要 `KT_SHOTS=1`，只在 push 到主分支的 `screenshots` job 里跑（PR 上没有） |
+| CI 的图拉丁字体与 Windows 不同 | Linux 上没有 Windows 那套字体，fontconfig 会替换：标题与正文里的英文明显更粗更方。CI 的图可用于核对版面、间距、配色、溢出，不适合核对字重与字形 |
 | 深色下 Hero 主按钮仍是白底 | "纸上一块白"是刻意的层次；代价是它的字色 `HeroActionInk` 必须固定，不跟着主题走 |
 | 浅色的 `Faint` 只有 2.95:1 | 它只用于计数、脚注这类提示级文字，不承担正文；深色下同一项是 4.46:1 |
 | 换主题时整棵树重建 | 滚动位置与局部展开状态会重置（切主题是低频动作，换来的是"一处定义、处处跟随"） |
@@ -649,8 +684,9 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 
 ## 下一步建议
 
-1. **首次跑通 CI**：push 一次看 `toolchain`、`jvm-tests`、`screenshots` 三个 job 在 Ubuntu 上是否绿；
-   重点盯 compileSdk 37、离屏渲染的按键测试，以及截图 job 的 `libgl1` / `fonts-noto-cjk` 假设；
+1. **把 `android` / `desktop` 两个 job 也跑一遍**：手动触发一次，看 Ubuntu 上能不能打 APK、
+   Windows runner 上能不能出 MSI。这两档从未在 runner 上跑过，是最可能再冒出
+   "本机能跑、CI 不能跑"的地方（`gradlew` 权限位就是这类问题）；
 2. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 移除 → 错题；
 3. **SQLite 存储层**（P11 规模，不能一刀切）：先解决「整库常驻内存 / 改一道题重写整个文件」。
    它是唯一一处"换实现要跨平台分叉"的地方：Web（js/wasm）没有可用的 SQLite 驱动，
