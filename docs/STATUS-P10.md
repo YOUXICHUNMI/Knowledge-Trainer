@@ -12,6 +12,10 @@ release APK 9.7 MB 未签名），桌面端 exe 实测可启动；
 `sources` / `contentDigest` 包，现在两边规范与校验器逐字节一致，四份真实题库（A/B/C/总）
 在新校验器下仍全部通过。
 
+之后又走了三刀：CI 把回归清单收成一份（第 1 节）、组合根从 3371 行拆到 1622 行（第 2–14 节）、
+深色主题从"只有浅色"变成两套成套配色 + 像素护栏（第 18 节）。最近这一刀把 74 张截图
+也搬进 CI（第 19 节），并顺手证明了**"job 绿着但一张图没拍"有三种走法**。
+
 ## P10-1 架构验收：把"依赖只能指向内层"变成测试
 
 新增 `shared/src/jvmTest/.../architecture/ArchitectureTest.kt`（9 个用例），
@@ -153,12 +157,13 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 
 ### 1. CI：清单只维护一份
 
-`.github/workflows/ci.yml` 三个触发面：
+`.github/workflows/ci.yml` 四个触发面：
 
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
 | push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，664 用例，失败时上传测试报告 |
+| push 到主分支 / 手动 | `screenshots` | `KT_SHOTS=1` 离屏渲染 74 张页面图，核对张数后作为 artifact 上传（见第 19 节） |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -567,20 +572,59 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 反倒会被当成浅色页跳过；改成读 `Palette.current`。护栏验证过：把深色的 `Panel` 改亮，
 它立刻报"5838 个 8×8 小块整块都是亮的，最亮的一块在 (0,0)"。
 
-深色**逐张看过**的截图（20 张全部拍，看了 18 张）：
+深色**逐张看过**的截图（20 张全部拍，20 张全部看过）：
 `55-home-dark`、`56-practice-feedback-dark`、`57-home-dark-phone`（420dp 手机宽度，胶囊不挤标题）、
 `58-history-dark`（判定色同框）、`59-toolbox-dark`（计算器键盘）、`60-import-dark`、
-`61-question-editor-dark`（第 4 条就是在这里发现的）、`62-notes-dark`、`64-graph-dark`、
-`65-extensions-dark`、`66-ai-dark`、`67-backup-dark`（空状态）、`69-summary-dark`、`70-standard-dark`、
+`61-question-editor-dark`（第 4 条就是在这里发现的）、`62-notes-dark`、`63-note-editor-dark`、
+`64-graph-dark`、`65-extensions-dark`、`66-ai-dark`、`67-backup-dark`（空状态）、
+`68-wrong-dark`、`69-summary-dark`、`70-standard-dark`、
 `71-backup-overview-dark`、`72-backup-encrypt-dark`、`73-backup-exported-dark`、`74-backup-restore-dark`。
-没看的两张是 `63-note-editor-dark` 与 `68-wrong-dark`（前者与 `19-note-editor-formula` 同源，
-后者与 `58-history-dark` 共用判定色）—— 如实写在这里，而不是藏在「已全面支持深色」后面。
+最后补看的两张（`63-note-editor-dark`、`68-wrong-dark`）都没问题：卡片比底色亮一档、边线看得见，
+错题本右上角的「错误 / 部分正确」在墨底上清楚可读 —— 这两个颜色本来就在 4.5:1 的断言清单里
+（`wrong/panel`、`pending/panel`），图与断言对得上，不是"看着还行"。
 
 **备份主界面那份债已经还了**：`renderBackup()` 的准备代码抽成 `backupFixture()`（真实临时目录 +
 一个题库 + 一条历史），浅色与深色共用同一份 —— 这一页的每句话都挂在真实数字上（几个题库、
 多少文件、多大），假数据拍出来没有核对价值。新增 `renderBackupDark`：总览、加密口令、刚导出、
 恢复预览四张。顺带发现的坑：加密开着的时候导出卡片高出一大截，恢复预览被推到画面外面 ——
 所以恢复那张先把开关关掉再导出（与浅色那套的顺序一致）。
+
+## 19. 截图进 CI：先证明它真的会拍，再证明它拍了 74 张
+
+上一节留下的空缺是：74 张图与那条"深色页某块还是浅色"的像素断言只在本地生效，
+因为 `ScreenshotTest` 要 `KT_SHOTS=1` 才渲染，而 CI 上没人设这个变量。补法是加一个
+`screenshots` job（push 到主分支与手动触发时跑），`KT_SHOTS=1` 渲染完把
+`shared/build/ui-shots` 作为 artifact 上传。
+
+不难，但"跑起来了"和"跑对了"是两件事；这个 job 最可能的失败方式是**绿着、图一张没有**。
+写之前先把三种"静默空跑"逐一验过（本机真实执行，Windows + 同一个 Gradle daemon）：
+
+| 情形 | 命令 | 结果 |
+|---|---|---|
+| 图目录被删后重跑 | `KT_SHOTS=1 ./gradlew :shared:jvmTest --tests "*ScreenshotTest*"` | `:shared:jvmTest` **UP-TO-DATE**，**0 张**，退出码 0 |
+| 测试结果命中构建缓存 | 同上 + `cleanJvmTest` | `:shared:jvmTest` **FROM-CACHE**，**0 张**，退出码 0 |
+| 强制重跑、绕过缓存 | 同上 + `--rerun-tasks --no-build-cache` | **74 张**，用时 80s（含编译） |
+
+第二种是 CI 上真会发生的那种：`gradle/actions/setup-gradle` 默认恢复上一次的构建缓存，
+`jvmTest` 一旦 `FROM-CACHE`，用例"通过"了、报告也有，就是没有图。所以渲染那一步固定带
+`--rerun-tasks --no-build-cache`。
+
+顺带把另一个猜测验掉了：**`KT_SHOTS` 不需要像 `KT_BENCH` 那样在构建脚本里转发**。
+同一个 daemon 下，设变量 74 张、不设 0 张 —— 变量是按每次调用进测试进程的。
+`build.gradle.kts` 里 `KT_BENCH` 那行没动：它读的是**构建脚本**里的 `System.getenv`
+（跑在 daemon 内），与测试进程自己读环境是两条路，这一轮没测它，就不顺手改。
+
+**用例数会骗人，文件数不会**。所以渲染之后单独一步核对张数，并且卡死 74：
+`--tests` 写错、变量没生效、缓存命中，这三种都会让"一张图都没有"的 job 变成绿的。
+三个分支在临时目录里都演练过（0 张 → 报错退出 1；73 张 → 报"期望 74"退出 1；74 张 → 通过），
+张数与文件清单同时写进 job summary，点开就能看见拍了哪 74 张。这个数字写在
+`ci.yml` 的 `EXPECTED_SHOTS` 里，新增截图时要一起改 —— 宁可让人改一个数字，
+也不要让"少拍了一半"安静地过去。
+
+两样渲染前提写进了 job：`libgl1`（skiko 的 Linux 原生库会 dlopen `libGL.so.1`）与
+`fonts-noto-cjk`（界面全是中文，缺字体拍出来是豆腐块，那样的产物等于没拍）。
+**这一段是推断，还没在真实 runner 上跑过** —— 红了先看报错是 `libGL.so.1` 找不到还是字体，
+再决定要不要补 `xvfb`。
 
 ## 已知限制（P10 之后仍然成立）
 
@@ -592,12 +636,11 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 664 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 664 用例 + 主分支截图），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑、`screenshots` job 的 `libgl1` / CJK 字体假设成不成立，都要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 | 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
-| 深色有 2 张截图没看 | 20 张深色截图看了 18 张，`63-note-editor-dark` 与 `68-wrong-dark` 没看 |
-| 像素护栏只常驻三页 | `DarkSurfaceTest` 只渲染练习 / 导入 / 历史；全量 74 张截图那条要 `KT_SHOTS=1`，CI 上默认不跑 |
+| 像素护栏只有三页常驻 | `DarkSurfaceTest` 只渲染练习 / 导入 / 历史，每次 `:shared:jvmTest` 都跑；全量 74 张那条要 `KT_SHOTS=1`，只在 push 到主分支的 `screenshots` job 里跑（PR 上没有）。且这个 job 还没在真实 runner 上跑过 |
 | 深色下 Hero 主按钮仍是白底 | "纸上一块白"是刻意的层次；代价是它的字色 `HeroActionInk` 必须固定，不跟着主题走 |
 | 浅色的 `Faint` 只有 2.95:1 | 它只用于计数、脚注这类提示级文字，不承担正文；深色下同一项是 4.46:1 |
 | 换主题时整棵树重建 | 滚动位置与局部展开状态会重置（切主题是低频动作，换来的是"一处定义、处处跟随"） |
@@ -606,13 +649,11 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 
 ## 下一步建议
 
-1. **首次跑通 CI**：push 一次看 `toolchain` 与 `jvm-tests` 是否在 Ubuntu 上绿；重点盯 compileSdk 37；
+1. **首次跑通 CI**：push 一次看 `toolchain`、`jvm-tests`、`screenshots` 三个 job 在 Ubuntu 上是否绿；
+   重点盯 compileSdk 37、离屏渲染的按键测试，以及截图 job 的 `libgl1` / `fonts-noto-cjk` 假设；
 2. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 移除 → 错题；
 3. **SQLite 存储层**（P11 规模，不能一刀切）：先解决「整库常驻内存 / 改一道题重写整个文件」。
    它是唯一一处"换实现要跨平台分叉"的地方：Web（js/wasm）没有可用的 SQLite 驱动，
    所以只能 `jvm`/`android`/`ios` 走 SQLite、`js`/`wasm` 继续文件或内存，端口得先长出查询语义
    （现在 `TextStorage` 只会读整份文本，而 SQLite 的价值恰恰在"只读需要的部分"）。
    真做之前先补一次基线：用 `KT_BENCH=1` 重跑十万题，把开工前的数字写下来。
-4. **CI 里也跑一次截图**：`ScreenshotTest` 只在 `KT_SHOTS=1` 时渲染，CI 上没有这一步，
-   所以它的 74 张图与那条像素护栏只在本地生效（`DarkSurfaceTest` 那三页例外，它每次都会跑）。
-   要补的是：加一个只在 push 到 main 时跑的 job，`KT_SHOTS=1` + 上传 `ui-shots/` 作为 artifact。

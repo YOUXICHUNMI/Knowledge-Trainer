@@ -1,11 +1,14 @@
 name: CI
 
-# 三档：
+# 四档：
 #   push / PR        → 必跑：Python 工具链全量回归 + Kotlin 全量单测
+#   push 到主分支    → 加跑：74 张页面截图（产物是人要去看的图，不压在每个 PR 上）
 #   workflow_dispatch → 额外跑 Android 与 Windows 桌面打包（慢，按需）
 #
 # 为什么 Android 与桌面打包不放进必跑：两者都要拉 SDK / WiX，单次十几分钟，
 # 而它们的产物每天并不变。"提交即验"要的是快信号，产物在发版前手动触发即可。
+# 截图为什么不进 PR：它只证明"图还能渲染出来"，看的是产物而不是结果码，
+# 而 PR 的必跑里已经有 DarkSurfaceTest 那三页的像素护栏。
 
 on:
   push:
@@ -92,6 +95,87 @@ jobs:
             shared/build/reports/tests/jvmTest
             shared/build/test-results/jvmTest
             shared/build/test-summary.txt
+          if-no-files-found: warn
+
+  # ------------------------------------------------------------------ 截图
+  # 74 张页面图的离屏渲染，外加"深色页某块还是浅色"的像素断言。
+  # 本地对应的命令是同一条：`KT_SHOTS=1 ./gradlew :shared:jvmTest --tests "*ScreenshotTest*"`。
+  screenshots:
+    name: 页面截图（离屏渲染）
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+    runs-on: ubuntu-latest
+    env:
+      KT_SHOTS: "1"
+      # 卡死张数是有原因的：`--tests` 过滤写错、KT_SHOTS 没生效、测试结果命中缓存，
+      # 这三种情况都会让"一张图都没渲染"的 job 变成绿的。用例总数会骗人，文件数不会。
+      # 新增或删掉截图时同步改这里（docs 里也写着这个数字）。
+      EXPECTED_SHOTS: "74"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 与 jvm-tests 同理：shared 带 androidTarget，配置阶段就要能定位 compileSdk。
+      - name: 准备 Android SDK
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;37.0.0" > /dev/null 2>&1 || \
+              echo "::warning::compileSdk 37 未能预装，交给 AGP 自动下载"
+          fi
+
+      # 两样东西是渲染的前提：skiko 的 linux 原生库会 dlopen libGL.so.1；
+      # 界面全是中文，没有 CJK 字体拍出来是一堆豆腐块 —— 那样的产物等于没拍。
+      - name: 装渲染依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libfontconfig1 fonts-noto-cjk
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # --rerun-tasks --no-build-cache 不是保守，是必需：setup-gradle 会恢复上一次的
+      # 构建缓存，jvmTest 一旦 FROM-CACHE 就直接"通过"，图片一张都不会写出来。
+      - name: 渲染截图
+        run: >
+          ./gradlew :shared:jvmTest --tests "*ScreenshotTest*"
+          --rerun-tasks --no-build-cache --console=plain
+
+      - name: 核对张数
+        run: |
+          count=$(find shared/build/ui-shots -name '*.png' | wc -l | tr -d ' ')
+          echo "渲染 $count 张（期望 $EXPECTED_SHOTS）" >> "$GITHUB_STEP_SUMMARY"
+          find shared/build/ui-shots -name '*.png' -printf '%f\n' | sort | tr '\n' ' ' >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::一张图都没渲染 —— KT_SHOTS 没进测试进程，或 --tests 匹配不到用例"
+            exit 1
+          fi
+          if [ "$count" -ne "$EXPECTED_SHOTS" ]; then
+            echo "::error::渲染了 $count 张，期望 $EXPECTED_SHOTS 张：要么新增/删掉了截图（改 EXPECTED_SHOTS 与 docs），要么有用例被静默跳过"
+            exit 1
+          fi
+
+      - name: 上传截图
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-shots
+          path: shared/build/ui-shots
+          if-no-files-found: error
+
+      - name: 上传测试报告（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-shots-test-results
+          path: |
+            shared/build/reports/tests/jvmTest
+            shared/build/test-results/jvmTest
           if-no-files-found: warn
 
   # ---------------------------------------------------------------- Android

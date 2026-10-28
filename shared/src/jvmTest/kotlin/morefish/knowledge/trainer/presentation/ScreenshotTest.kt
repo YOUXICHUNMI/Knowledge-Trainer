@@ -57,7 +57,10 @@ import kotlin.test.assertTrue
  * 离屏渲染各页面为 PNG，用来人工核对排版与配色。
  *
  * 默认不执行：它需要 Skia 图形栈，且在无显示环境里没有意义。
- * 需要看图时：`KT_SHOTS=1 ./gradlew :shared:jvmTest --tests "*ScreenshotTest*"`。
+ * 需要看图时：`KT_SHOTS=1 ./gradlew :shared:jvmTest --tests "*ScreenshotTest*"`
+ * `build/ui-shots` 不在任务的输出声明里，所以删掉图再跑会直接 UP-TO-DATE（或命中构建缓存
+ * FROM-CACHE）：用例"通过"、退出码 0、一张图都没有。要真重拍就带 `--rerun-tasks --no-build-cache`。
+ * `outDir` 是相对模块目录的，图落在 `shared/build/ui-shots`。
  */
 class ScreenshotTest {
 
