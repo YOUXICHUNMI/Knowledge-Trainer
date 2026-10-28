@@ -80,10 +80,10 @@ class MultiLocalePracticeTest {
         testScheduler.advanceUntilIdle()
 
         // 界面是中文，题库源语言也是中文：默认就该练中文，而不是"有英文就练英文"
-        assertEquals("zh-Hans", c.setupLocale)
-        assertEquals(3, c.setupCandidateCount)
-        assertEquals(0, c.setupUntranslated)
-        assertEquals(listOf("zh-Hans", "en"), c.setupLocales)
+        assertEquals("zh-Hans", c.setup.locale)
+        assertEquals(3, c.setup.candidateCount)
+        assertEquals(0, c.setup.untranslated)
+        assertEquals(listOf("zh-Hans", "en"), c.setup.locales)
     }
 
     @Test
@@ -94,18 +94,18 @@ class MultiLocalePracticeTest {
         val c = controller(storage, testScheduler)
         c.refresh()
         c.openSetup("bank-bilingual")
-        c.selectSetupLocale("en")
+        c.setup.selectLocale("en")
         testScheduler.advanceUntilIdle()
 
-        assertEquals(2, c.setupCandidateCount, "英文只翻了 2 题，就该只有 2 题可抽")
-        assertEquals(1, c.setupUntranslated, "q2 没有英文译文")
-        assertEquals(2, c.setupCoverage?.covered)
-        assertEquals(3, c.setupCoverage?.total)
+        assertEquals(2, c.setup.candidateCount, "英文只翻了 2 题，就该只有 2 题可抽")
+        assertEquals(1, c.setup.untranslated, "q2 没有英文译文")
+        assertEquals(2, c.setup.coverage?.covered)
+        assertEquals(3, c.setup.coverage?.total)
 
         // 打开「缺译文时看原文」才把没译文的题放回来
-        c.toggleSetupFallback()
-        assertEquals(LocaleFallback.ORIGINAL, c.setupFallback)
-        assertEquals(3, c.setupCandidateCount)
+        c.setup.toggleFallback()
+        assertEquals(LocaleFallback.ORIGINAL, c.setup.fallback)
+        assertEquals(3, c.setup.candidateCount)
     }
 
     @Test
@@ -116,8 +116,8 @@ class MultiLocalePracticeTest {
         val c = controller(storage, testScheduler)
         c.refresh()
         c.openSetup("bank-bilingual")
-        c.selectSetupLocale("en")
-        c.selectSetupCount(null)
+        c.setup.selectLocale("en")
+        c.setup.selectCount(null)
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
 
@@ -142,7 +142,7 @@ class MultiLocalePracticeTest {
         val c = controller(storage, testScheduler)
         c.refresh()
         c.openSetup("bank-bilingual")
-        c.selectSetupLocale("en")
+        c.setup.selectLocale("en")
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
         c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
@@ -151,13 +151,13 @@ class MultiLocalePracticeTest {
 
         // 英文里答过一道题，不该让中文的「未练习」少一题
         c.openSetup("bank-bilingual")
-        c.selectSetupScope(PracticeScope.UNPRACTICED)
+        c.setup.selectScope(PracticeScope.UNPRACTICED)
         testScheduler.advanceUntilIdle()
-        assertEquals(3, c.scopeCount(PracticeScope.UNPRACTICED), "中文视角下这 3 题都没练过")
+        assertEquals(3, c.setup.scopeCount(PracticeScope.UNPRACTICED), "中文视角下这 3 题都没练过")
 
-        c.selectSetupLocale("en")
+        c.setup.selectLocale("en")
         testScheduler.advanceUntilIdle()
-        assertEquals(1, c.scopeCount(PracticeScope.UNPRACTICED), "英文视角下只剩 q3 没练")
+        assertEquals(1, c.setup.scopeCount(PracticeScope.UNPRACTICED), "英文视角下只剩 q3 没练")
     }
 
     @Test
@@ -179,7 +179,7 @@ class MultiLocalePracticeTest {
 
         // 英文练一题
         c.openSetup("bank-bilingual")
-        c.selectSetupLocale("en")
+        c.setup.selectLocale("en")
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
         c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
@@ -208,8 +208,8 @@ class MultiLocalePracticeTest {
         val c = controller(storage, testScheduler)
         c.refresh()
         c.openSetup("bank-bilingual")
-        c.selectSetupLocale("en")
-        c.toggleSetupFallback()
+        c.setup.selectLocale("en")
+        c.setup.toggleFallback()
         c.startPlannedPractice()
         testScheduler.advanceUntilIdle()
 
@@ -227,5 +227,46 @@ class MultiLocalePracticeTest {
             c.currentQuestionShowsOriginal,
             "「原文」徽章必须跟着当前题实际用的语言走",
         )
+    }
+
+    @Test
+    fun saysTranslationIsMissingRatherThanPretendingThereIsNoQuestion() = runTest {
+        val storage = InMemoryTextStorage()
+        val untranslatedOnly = QuestionBank(
+            bankId = "bank-zh-only",
+            title = "只有中文",
+            sourceLocale = "zh-Hans",
+            questions = listOf(
+                Question(
+                    questionId = "only",
+                    type = QuestionType.SINGLE_CHOICE,
+                    promptMarkdown = "只有中文的题干",
+                    options = listOf(QuestionOption("o1", "甲"), QuestionOption("o2", "乙")),
+                    correctOptionIds = setOf("o1"),
+                ),
+            ),
+            importedAtMillis = 0,
+            sourceLabel = "test",
+            localeCoverage = listOf(LocaleCoverage("zh-Hans", 1, 1), LocaleCoverage("en", 0, 1)),
+        )
+        AppDependencies(storage, clock).bankRepository.save(untranslatedOnly)
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.openSetup("bank-zh-only")
+        c.setup.selectLocale("en")
+
+        assertEquals(0, c.setup.candidateCount)
+        assertEquals(1, c.setup.untranslated)
+        assertNull(c.session)
+
+        c.startPlannedPractice()
+
+        // 原因必须说"这门语言没译文"，而不是含糊的"没有可练习的题目" ——
+        // 后者会让人以为题库坏了、去翻题库，实际上只是没翻译。
+        val banner = assertNotNull(c.banner)
+        assertTrue(banner.isError)
+        assertTrue(banner.text.contains("译文"), "实际横幅：${banner.text}")
+        assertNull(c.session)
     }
 }

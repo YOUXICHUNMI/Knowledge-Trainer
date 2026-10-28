@@ -42,7 +42,7 @@ import morefish.knowledge.trainer.presentation.ui.StaggeredAppear
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PracticeSetupScreen(controller: AppController) {
-    val bank = controller.setupBank
+    val bank = controller.setup.bank
 
     ScreenScaffold(
         title = "练习设置",
@@ -71,15 +71,15 @@ fun PracticeSetupScreen(controller: AppController) {
                 ) {
                     PracticeScope.entries.forEach { scope ->
                         KtChip(
-                            label = "${scope.label} ${controller.scopeCount(scope)}",
-                            selected = controller.setupScope == scope,
-                            onClick = { controller.selectSetupScope(scope) },
+                            label = "${scope.label} ${controller.setup.scopeCount(scope)}",
+                            selected = controller.setup.scope == scope,
+                            onClick = { controller.setup.selectScope(scope) },
                         )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    controller.setupScope.hint,
+                    controller.setup.scope.hint,
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.Faint,
                 )
@@ -87,7 +87,7 @@ fun PracticeSetupScreen(controller: AppController) {
         }
 
         // 语言：只有多语言题库才显示 —— 单语言题库摆一排只有一项的胶囊是噪音
-        val locales = controller.setupLocales
+        val locales = controller.setup.locales
         if (locales.size > 1) {
             Spacer(Modifier.height(20.dp))
             StaggeredAppear(1) {
@@ -102,13 +102,13 @@ fun PracticeSetupScreen(controller: AppController) {
                             val coverage = bank.coverageOf(locale)
                             KtChip(
                                 label = "${localeLabel(locale)} ${coverage.summary}",
-                                selected = controller.setupLocale == locale,
-                                onClick = { controller.selectSetupLocale(locale) },
+                                selected = controller.setup.locale == locale,
+                                onClick = { controller.setup.selectLocale(locale) },
                             )
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    val coverage = controller.setupCoverage
+                    val coverage = controller.setup.coverage
                     if (coverage != null && !coverage.complete) {
                         Text(
                             "这门语言翻译了 ${coverage.covered}/${coverage.total} 题，" +
@@ -130,31 +130,31 @@ fun PracticeSetupScreen(controller: AppController) {
         Spacer(Modifier.height(20.dp))
         StaggeredAppear(1) {
             Column {
-                SectionTitle("题型", if (controller.setupTypes.isEmpty()) "不选 = 全部" else "已选 ${controller.setupTypes.size} 类")
+                SectionTitle("题型", if (controller.setup.types.isEmpty()) "不选 = 全部" else "已选 ${controller.setup.types.size} 类")
                 Spacer(Modifier.height(10.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     QuestionType.entries.forEach { type ->
-                        val count = controller.setupTypeCount(type)
+                        val count = controller.setup.typeCount(type)
                         KtChip(
                             label = "${type.label} $count",
-                            selected = type in controller.setupTypes,
+                            selected = type in controller.setup.types,
                             enabled = count > 0,
-                            onClick = { controller.toggleSetupType(type) },
+                            onClick = { controller.setup.toggleType(type) },
                         )
                     }
                 }
             }
         }
 
-        val tags = controller.setupTagPool
+        val tags = controller.setup.tagPool
         if (tags.isNotEmpty()) {
             Spacer(Modifier.height(20.dp))
             StaggeredAppear(2) {
                 Column {
-                    SectionTitle("标签", if (controller.setupTags.isEmpty()) "不选 = 全部" else null)
+                    SectionTitle("标签", if (controller.setup.tags.isEmpty()) "不选 = 全部" else null)
                     Spacer(Modifier.height(10.dp))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -163,8 +163,8 @@ fun PracticeSetupScreen(controller: AppController) {
                         tags.forEach { tag ->
                             KtChip(
                                 label = tag,
-                                selected = tag in controller.setupTags,
-                                onClick = { controller.toggleSetupTag(tag) },
+                                selected = tag in controller.setup.tags,
+                                onClick = { controller.setup.toggleTag(tag) },
                             )
                         }
                     }
@@ -184,14 +184,14 @@ fun PracticeSetupScreen(controller: AppController) {
                     listOf(10, 20, 50).forEach { count ->
                         KtChip(
                             label = "$count 题",
-                            selected = controller.setupCount == count,
-                            onClick = { controller.selectSetupCount(count) },
+                            selected = controller.setup.count == count,
+                            onClick = { controller.setup.selectCount(count) },
                         )
                     }
                     KtChip(
                         label = "全部",
-                        selected = controller.setupCount == null,
-                        onClick = { controller.selectSetupCount(null) },
+                        selected = controller.setup.count == null,
+                        onClick = { controller.setup.selectCount(null) },
                     )
                 }
             }
@@ -203,32 +203,32 @@ fun PracticeSetupScreen(controller: AppController) {
                 ToggleRow(
                     title = "混合题型",
                     description = "按题型轮转抽取，避免抽到的全是同一类题",
-                    checked = controller.setupMixedTypes,
-                    onChange = controller::toggleSetupMixedTypes,
+                    checked = controller.setup.mixedTypes,
+                    onChange = controller.setup::toggleMixedTypes,
                 )
                 Spacer(Modifier.height(14.dp))
                 ToggleRow(
                     title = "选项随机",
                     description = "打乱 A/B/C/D 的显示顺序；正确答案按 optionId 判定，不会漂移",
-                    checked = controller.setupShuffleOptions,
-                    onChange = controller::toggleSetupShuffleOptions,
+                    checked = controller.setup.shuffleOptions,
+                    onChange = controller.setup::toggleShuffleOptions,
                 )
                 // 只有真的缺译文时才给这个开关：语言完整时它是个没有意义的选项
-                if (controller.setupUntranslated > 0 && locales.size > 1) {
+                if (controller.setup.untranslated > 0 && locales.size > 1) {
                     Spacer(Modifier.height(14.dp))
                     ToggleRow(
                         title = LocaleFallback.ORIGINAL.label,
                         description = "关着 = 只练有译文的题（默认）；打开 = 缺译文时显示原文并标注，判题用原文答案",
-                        checked = controller.setupFallback == LocaleFallback.ORIGINAL,
-                        onChange = controller::toggleSetupFallback,
+                        checked = controller.setup.fallback == LocaleFallback.ORIGINAL,
+                        onChange = controller.setup::toggleFallback,
                     )
                 }
             }
         }
 
         Spacer(Modifier.height(16.dp))
-        val candidates = controller.setupCandidateCount
-        val planned = minOf(controller.setupCount ?: candidates, candidates)
+        val candidates = controller.setup.candidateCount
+        val planned = minOf(controller.setup.count ?: candidates, candidates)
 
         StaggeredAppear(5) {
             Panel(
@@ -262,7 +262,7 @@ fun PracticeSetupScreen(controller: AppController) {
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "候选 $candidates 题 · ${controller.setupPlan.describe()}",
+                            "候选 $candidates 题 · ${controller.setup.plan.describe()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = Palette.Muted,
                             maxLines = 2,

@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 3160 行（拆工具箱前 3371，拆历史前 3219） |
+| `AppController.kt` | 2972 行（3371 → 3219 → 3160 → 2972） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，614 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，615 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -28,7 +28,7 @@ presentation/
   AppController.kt        组合根 + 共享内核（读模型 / 导航 / 刷新编排）
   toolbox/ToolboxController.kt      ✅ 已拆
   history/HistoryController.kt      ✅ 已拆
-  setup/PracticeSetupController.kt
+  setup/PracticeSetupController.kt ✅ 已拆
   ai/AiController.kt
   editor/QuestionEditorController.kt
   review/ReviewController.kt
@@ -65,7 +65,7 @@ presentation/
 |---|---|---:|---|---|
 | 1 | 工具箱（计算器 + 单位换算） | ~150 | `ToolboxScreen` | ✅ 已完成 |
 | 2 | 历史与日历 | ~82 | `HistoryScreen` | ✅ 已完成 |
-| 3 | 练习设置 | ~86 | `PracticeSetupScreen` | 待做 |
+| 3 | 练习设置 | ~86 | `PracticeSetupScreen` | ✅ 已完成 |
 | 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | 待做 |
 | 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | 待做 |
 | 6 | 历史复核 | ~199 | `ReviewScreens` | 待做 |
@@ -125,3 +125,25 @@ presentation/
 
 顺带删掉了一处遗留：`/** 工具箱的两个面板。 */` 这行 KDoc 在第一刀之后失去了宿主，
 挂在了 `GraphPickSide` 上面，读起来像"图谱编辑器有两个面板"。
+
+## 已完成的第三刀（练习设置）
+
+- 新增 `presentation/setup/PracticeSetupController.kt`（301 行）：抽题范围、题型、
+  标签、题量、语言、缺译文策略，连同**按语言算出来的那份历史统计**
+  （一道题在英文里答对过，不代表中文里也会）与两类计数缓存（题型分布、各范围候选数）。
+- 依附关系比前两刀更像"一个功能"：它依赖题库（取语言与标签）、历史（算统计）、
+  收藏（候选数算法要用），三个都通过读取器传入，与历史页同一套做法。
+- 与前两刀最大的不同：**它要造东西**。`start()` 抽题成功后不自己往下走，
+  而是返回 `SetupStart.Ready(session)` / `SetupStart.Empty(reason)` ——
+  组合根接过来决定弹哪条横幅、跳哪个页面、什么时候存盘。子控制器不导航、
+  不写盘、不弹提示，这条边界在这刀第一次真正被用到。
+- 计数的失效时机被收进类里：历史一变，组合根只调 `invalidateStats()`，
+  不必再知道"哪个 private 字段该清空"。此前这一步是两处零散的
+  `setupStatsLocale = ""`，散落在 `loadAll` 与 `reloadHistory` 中间。
+- `startPractice`（题库卡片上的快捷开始）也搬了抽题部分：它有自己的默认语言，
+  不能借用设置页当前的选择 —— 用户可能刚在另一个题库里选了英文。
+- 调用方 44 行：`PracticeSetupScreen` 31、`MultiLocalePracticeTest` 22（另加 1 个新用例）、
+  `AppControllerTest` 7、`ScreenshotTest` 3 —— 全部是 `controller.setupXxx` → `controller.setup.xxx`。
+- 新增用例 `saysTranslationIsMissingRatherThanPretendingThereIsNoQuestion`：
+  整库没有某语言译文时，横幅要说"这门语言没译文"，而不是含糊的"没有可练习的题目"。
+- 文件从 3160 行降到 2972 行；614 → 615 用例全绿，行为不变。

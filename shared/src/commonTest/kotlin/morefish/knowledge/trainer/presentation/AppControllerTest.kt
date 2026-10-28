@@ -157,8 +157,8 @@ class AppControllerTest {
         assertEquals(6, bank.questionCount)
 
         controller.openSetup(bank.bankId)
-        controller.selectSetupScope(PracticeScope.UNPRACTICED)
-        assertEquals(6, controller.setupCandidateCount)
+        controller.setup.selectScope(PracticeScope.UNPRACTICED)
+        assertEquals(6, controller.setup.candidateCount)
 
         controller.startPlannedPractice()
         testScheduler.advanceUntilIdle()
@@ -169,11 +169,11 @@ class AppControllerTest {
         testScheduler.advanceUntilIdle()
 
         controller.openSetup(bank.bankId)
-        controller.selectSetupScope(PracticeScope.UNPRACTICED)
+        controller.setup.selectScope(PracticeScope.UNPRACTICED)
         // 答过一题（该题若被判错仍会算"已练"，因为未练习只看有没有有效作答）
         assertTrue(
-            controller.setupCandidateCount == 5,
-            "答过一题后未练习应为 5，实际 ${controller.setupCandidateCount}",
+            controller.setup.candidateCount == 5,
+            "答过一题后未练习应为 5，实际 ${controller.setup.candidateCount}",
         )
     }
 
@@ -185,8 +185,8 @@ class AppControllerTest {
         val controller = controller(storage, testScheduler)
         controller.refresh()
         controller.openSetup(controller.banks.single().bankId)
-        controller.selectSetupCount(20)
-        controller.toggleSetupMixedTypes()
+        controller.setup.selectCount(20)
+        controller.setup.toggleMixedTypes()
         controller.startPlannedPractice()
         testScheduler.advanceUntilIdle()
 

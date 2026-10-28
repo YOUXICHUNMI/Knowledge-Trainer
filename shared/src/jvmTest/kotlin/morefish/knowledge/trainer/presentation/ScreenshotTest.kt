@@ -685,11 +685,11 @@ class ScreenshotTest {
         controller.refresh()
 
         controller.openSetup(bank.bankId)
-        controller.selectSetupLocale("en")
+        controller.setup.selectLocale("en")
         shot("30-locale-setup", height = 1180) { AppContent(controller) }
 
-        controller.toggleSetupFallback()
-        controller.selectSetupCount(null)
+        controller.setup.toggleFallback()
+        controller.setup.selectCount(null)
         controller.startPlannedPractice()
         // 走到第一道"本场选了英文、但这题没译文"的题，把「原文」徽章拍进去
         var guard = 0

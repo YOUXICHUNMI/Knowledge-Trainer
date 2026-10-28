@@ -74,11 +74,8 @@ import morefish.knowledge.trainer.domain.extension.extensionOwnerOf
 import morefish.knowledge.trainer.domain.extension.mergedWith
 import morefish.knowledge.trainer.domain.extension.stateIn
 import morefish.knowledge.trainer.domain.grading.builtInGradingRegistry
-import morefish.knowledge.trainer.domain.i18n.LocaleCoverage
-import morefish.knowledge.trainer.domain.i18n.LocaleFallback
 import morefish.knowledge.trainer.domain.i18n.LocaleTag
 import morefish.knowledge.trainer.domain.i18n.localeLabel
-import morefish.knowledge.trainer.domain.i18n.pickLocale
 import morefish.knowledge.trainer.domain.graph.DependencyKind
 import morefish.knowledge.trainer.domain.graph.GraphEdge
 import morefish.knowledge.trainer.domain.graph.GraphEdgeView
@@ -101,7 +98,6 @@ import morefish.knowledge.trainer.domain.model.PracticeSession
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
 import morefish.knowledge.trainer.domain.model.QuestionType
-import morefish.knowledge.trainer.domain.model.isPracticable
 import morefish.knowledge.trainer.domain.model.Severity
 import morefish.knowledge.trainer.domain.model.SessionSummary
 import morefish.knowledge.trainer.domain.model.ValidationIssue
@@ -112,16 +108,16 @@ import morefish.knowledge.trainer.domain.model.countForBank
 import morefish.knowledge.trainer.domain.model.forQuestion
 import morefish.knowledge.trainer.domain.practice.AttemptReview
 import morefish.knowledge.trainer.domain.practice.AttemptReviews
-import morefish.knowledge.trainer.domain.practice.PracticePlan
 import morefish.knowledge.trainer.domain.practice.ReviewPlan
 import morefish.knowledge.trainer.domain.patch.BankRevision
 import morefish.knowledge.trainer.domain.patch.PatchApply
 import morefish.knowledge.trainer.domain.patch.PatchChangeKind
 import morefish.knowledge.trainer.domain.practice.LocalDates
-import morefish.knowledge.trainer.domain.practice.PracticeScope
 import morefish.knowledge.trainer.domain.practice.QuestionKey
 import morefish.knowledge.trainer.domain.practice.StudyStats
 import morefish.knowledge.trainer.presentation.history.HistoryController
+import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
+import morefish.knowledge.trainer.presentation.setup.SetupStart
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxController
 import morefish.knowledge.trainer.infrastructure.ai.OpenAiCompatibleProvider
 import morefish.knowledge.trainer.application.port.ChoiceMapping
@@ -426,49 +422,6 @@ class AppController(
     private var questionStartedAt: Long = 0L
     private var draftJob: Job? = null
 
-    // ---- 练习设置状态 ----
-    var setupBankId by mutableStateOf<String?>(null)
-        private set
-    var setupScope by mutableStateOf(PracticeScope.ALL)
-        private set
-    var setupTypes by mutableStateOf<Set<QuestionType>>(emptySet())
-        private set
-    var setupTags by mutableStateOf<Set<String>>(emptySet())
-        private set
-    var setupCount by mutableStateOf<Int?>(10)
-        private set
-    var setupMixedTypes by mutableStateOf(false)
-        private set
-    var setupShuffleOptions by mutableStateOf(true)
-        private set
-
-    /**
-     * 练习语言。空串表示"还没选"，打开设置页时会落到默认值
-     * （界面语言与题库语言的交集，取不到就是题库的源语言）。
-     */
-    var setupLocale by mutableStateOf("")
-        private set
-
-    /** 译文缺失时的处理方式。默认跳过 —— 把另一种语言当译文塞给用户比少练几题糟得多。 */
-    var setupFallback by mutableStateOf(LocaleFallback.SKIP)
-        private set
-
-    /** 该语言下没有译文的题数（按 [setupFallback] 是否被跳过）。设置页必须说出来。 */
-    var setupUntranslated by mutableStateOf(0)
-        private set
-
-    /**
-     * 按当前语言过滤后的历史统计。
-     *
-     * 为什么不用全局统计：一道题在英文里答对过，不代表中文里也会。
-     * 抽题范围（错题/未练/已巩固）必须以"这门语言的作答记录"为准。
-     */
-    private var setupStats by mutableStateOf(StudyStats.derive(emptyList()))
-    private var setupStatsLocale by mutableStateOf("")
-
-    /** 打开设置页时算一次：题目校验是 O(题目数)，不能每一帧重算。 */
-    private var setupTypeCounts by mutableStateOf<Map<QuestionType, Int>>(emptyMap())
-    private var setupScopeCounts by mutableStateOf<Map<PracticeScope, Int>>(emptyMap())
 
     // ---- 笔记 ----
     var notes by mutableStateOf<List<Note>>(emptyList())
@@ -826,7 +779,7 @@ class AppController(
         history = AttemptReviews.apply(attemptLog, attemptReviews)
         studyStats = StudyStats.derive(history)
         // 按语言缓存的那份统计作废：否则设置页会拿复核前的"未练习"数去抽题
-        setupStatsLocale = ""
+        setup.invalidateStats()
         // 复核生效后错题本与日历都要重算：它们的输入是"已合并复核结果的历史"
         historyView.update(history)
     }
@@ -1005,7 +958,7 @@ class AppController(
         reviewPlan = null
         studyStats = StudyStats.derive(history)
         // 历史变了，按语言缓存的那份统计就作废：否则设置页会拿旧的"未练习"数去抽题
-        setupStatsLocale = ""
+        setup.invalidateStats()
         favorites = deps.favoriteRepository.all()
         notes = deps.noteRepository.all()
         // 扩展包先于图谱读：图谱视图要从"生效中的包"合并关系
@@ -2367,89 +2320,23 @@ class AppController(
 
     // ---- 练习设置 ----
 
+    /**
+     * 抽题参数与那套"按语言算"的统计。
+     *
+     * 放在这里是因为导航要它：`openSetup` 打开页面、`startPlannedPractice` 拿到会话后
+     * 还要决定横幅与跳转。**会话本身由它造、由这里接**，它不碰 `screen` 也不写盘。
+     */
+    val setup = PracticeSetupController(
+        planPractice = planPractice,
+        banks = { banks },
+        history = { history },
+        favorites = { favorites },
+    )
+
     fun openSetup(bankId: String) {
-        setupBankId = bankId
-        setupScope = PracticeScope.ALL
-        setupTypes = emptySet()
-        setupTags = emptySet()
-        setupCount = 10
-        setupMixedTypes = false
-        setupShuffleOptions = true
-        val bank = banks.firstOrNull { it.bankId == bankId }
-        setupLocale = bank?.let { defaultPracticeLocale(it) }.orEmpty()
-        setupFallback = LocaleFallback.SKIP
-        recomputeSetup()
+        setup.open(bankId)
         screen = Screen.PRACTICE_SETUP
     }
-
-    /**
-     * 默认练习语言：界面语言能对上就用它，对不上用源语言。
-     *
-     * 界面上写的是中文，却默认用英文抽题，是最容易让人以为"题库坏了"的做法。
-     */
-    private fun defaultPracticeLocale(bank: QuestionBank): String =
-        pickLocale(UI_LOCALE, bank.availableLocales)?.tag?.value ?: bank.sourceLocale
-
-    /** 设置页/练习页展示用：这个题库有哪几种语言可选。 */
-    val setupLocales: List<String> get() = setupBank?.availableLocales.orEmpty()
-
-    val setupCoverage: LocaleCoverage?
-        get() = setupBank?.let { it.coverageOf(setupLocale.ifBlank { it.sourceLocale }) }
-
-    fun selectSetupLocale(locale: String) {
-        if (locale == setupLocale) return
-        setupLocale = locale
-        // 换语言等于换一套作答历史：统计与候选必须一起重算
-        setupTypes = emptySet()
-        setupTags = emptySet()
-        recomputeSetup()
-    }
-
-    fun toggleSetupFallback() {
-        setupFallback = if (setupFallback == LocaleFallback.SKIP) LocaleFallback.ORIGINAL else LocaleFallback.SKIP
-        recomputeSetup()
-    }
-
-    /**
-     * 重算设置页的计数：题型分布、范围候选、缺译文题数。
-     *
-     * 全部按当前语言重来，而不是拿全库数糊上去 —— 否则会写着"单选 6 题"，
-     * 真抽的时候因为没译文只剩 2 题。
-     */
-    private fun recomputeSetup() {
-        val bank = setupBank ?: return
-        val locale = setupLocale.ifBlank { bank.sourceLocale }
-        if (setupStatsLocale != locale) {
-            setupStats = StudyStats.derive(attemptsInLocale(bank, locale))
-            setupStatsLocale = locale
-        }
-        val inLocale = bank.questionsIn(locale, LocaleFallback.SKIP)
-        setupUntranslated = (bank.questionCount - inLocale.size).coerceAtLeast(0)
-        val practicable = bank.questionsIn(locale, setupFallback).filter { it.isPracticable() }
-        setupTypeCounts = QuestionType.entries.associateWith { type -> practicable.count { it.type == type } }
-        setupScopeCounts = PracticeScope.entries.associateWith { scope ->
-            planPractice.candidateCount(
-                bank = bank,
-                plan = PracticePlan(scope = scope),
-                stats = setupStats,
-                favorites = favorites,
-                locale = locale,
-                fallback = setupFallback,
-            )
-        }
-    }
-
-    /** 某题库在某语言下的作答历史。旧记录（无语言）算进源语言。 */
-    private fun attemptsInLocale(bank: QuestionBank, locale: String): List<AttemptRecord> {
-        val want = LocaleTag.parse(locale)?.value ?: locale
-        val source = LocaleTag.parse(bank.sourceLocale)?.value ?: bank.sourceLocale
-        return history.filter { record ->
-            record.bankId == bank.bankId &&
-                (LocaleTag.parse(record.locale)?.value ?: source) == want
-        }
-    }
-
-    val setupBank: QuestionBank? get() = banks.firstOrNull { it.bankId == setupBankId }
 
     // ---- 离线手工编辑 ----
 
@@ -2519,83 +2406,17 @@ class AppController(
         }
     }
 
-    val setupPlan: PracticePlan
-        get() = PracticePlan(
-            scope = setupScope,
-            types = setupTypes,
-            tags = setupTags,
-            questionCount = setupCount,
-            mixedTypes = setupMixedTypes,
-            shuffleOptions = setupShuffleOptions,
-        )
-
-    /** 设置页实时显示"会抽到多少题"，与真正抽题共用同一套筛选逻辑。 */
-    val setupCandidateCount: Int
-        get() = setupBank?.let { bank ->
-            planPractice.candidateCount(
-                bank = bank,
-                plan = setupPlan,
-                stats = setupStats,
-                favorites = favorites,
-                locale = setupLocale.ifBlank { bank.sourceLocale },
-                fallback = setupFallback,
-            )
-        } ?: 0
-
-    val setupTagPool: List<String>
-        get() = setupBank?.questions.orEmpty().flatMap { it.tags }.distinct().sorted()
-
-    fun setupTypeCount(type: QuestionType): Int = setupTypeCounts[type] ?: 0
-
-    fun scopeCount(scope: PracticeScope): Int = setupScopeCounts[scope] ?: 0
-
-    fun selectSetupScope(scope: PracticeScope) {
-        setupScope = scope
-    }
-
-    fun toggleSetupType(type: QuestionType) {
-        setupTypes = if (type in setupTypes) setupTypes - type else setupTypes + type
-    }
-
-    fun toggleSetupTag(tag: String) {
-        setupTags = if (tag in setupTags) setupTags - tag else setupTags + tag
-    }
-
-    fun selectSetupCount(count: Int?) {
-        setupCount = count
-    }
-
-    fun toggleSetupMixedTypes() {
-        setupMixedTypes = !setupMixedTypes
-    }
-
-    fun toggleSetupShuffleOptions() {
-        setupShuffleOptions = !setupShuffleOptions
-    }
-
+    /**
+     * 开始按设置页的选择练习。
+     *
+     * 抽题、收敛题量、算不了时的解释都在 [PracticeSetupController.start] 里；
+     * 这里只做组合根该做的两件事：把"抽不出题"变成横幅，把会话接过来。
+     */
     fun startPlannedPractice() {
-        val bank = setupBank ?: return
-        val plan = setupPlan
-        val locale = setupLocale.ifBlank { bank.sourceLocale }
-        val candidates = planPractice.candidateCount(bank, plan, setupStats, favorites, locale, setupFallback)
-        if (candidates == 0) {
-            val reason = if (setupUntranslated > 0 && setupFallback == LocaleFallback.SKIP) {
-                // 说清真正的原因：不是没题，是这门语言没译文
-                "该语言下有 $setupUntranslated 题没有译文，当前范围里已无题可练；可切换语言或改用「缺译文时看原文」"
-            } else {
-                "当前范围内没有可练习的题目，请放宽范围、题型或标签"
-            }
-            banner = Banner(reason, isError = true)
-            return
+        when (val outcome = setup.start()) {
+            is SetupStart.Ready -> applySession(outcome.session)
+            is SetupStart.Empty -> banner = Banner(outcome.reason, isError = true)
         }
-        // 题量按候选数收敛，会话里的 planLabel 才不会写着"20 题"却只有 6 题。
-        val effective = plan.questionCount?.takeIf { it > candidates }?.let { plan.copy(questionCount = candidates) } ?: plan
-        val created = planPractice.build(bank, effective, setupStats, favorites, locale = locale, fallback = setupFallback)
-        if (created == null) {
-            banner = Banner("当前范围内没有可练习的题目，请放宽范围、题型或标签", isError = true)
-            return
-        }
-        applySession(created)
     }
 
     // ---- 导入 ----
@@ -2835,18 +2656,9 @@ class AppController(
 
     // ---- 练习 ----
 
-    /** 题库卡片上的快捷入口：全部范围、固定题量。 */
+    /** 题库卡片上的快捷入口：全部范围、固定题量。抽题规则见 [PracticeSetupController.quickSession]。 */
     fun startPractice(bank: QuestionBank, questionCount: Int? = null) {
-        val plan = PracticePlan(scope = PracticeScope.ALL, questionCount = questionCount)
-        val locale = defaultPracticeLocale(bank)
-        val created = planPractice.build(
-            bank = bank,
-            plan = plan,
-            stats = attemptsInLocale(bank, locale).let { StudyStats.derive(it) },
-            favorites = favorites,
-            locale = locale,
-            fallback = LocaleFallback.SKIP,
-        )
+        val created = setup.quickSession(bank, questionCount)
         if (created == null) {
             banner = Banner("这个题库没有可练习的题目（全部未通过结构校验）", isError = true)
             return
@@ -2865,7 +2677,7 @@ class AppController(
         }
         // 错题用它们当初作答的语言复习：换成另一种语言，判题依据就变了
         val locale = entries.firstOrNull()?.latestAttempt?.locale?.takeIf { it.isNotBlank() }
-            ?: defaultPracticeLocale(bank)
+            ?: setup.defaultLocale(bank)
         applySession(
             startPractice.startFor(
                 bank = bank,
@@ -3019,7 +2831,7 @@ class AppController(
     }
 
     fun toggleFavorite(question: Question) {
-        val bankId = session?.bankId ?: setupBankId ?: return
+        val bankId = session?.bankId ?: setup.bankId ?: return
         val key = QuestionKey(bankId, question.questionId)
         scope.launch { favorites = deps.favoriteRepository.toggle(key) }
     }
