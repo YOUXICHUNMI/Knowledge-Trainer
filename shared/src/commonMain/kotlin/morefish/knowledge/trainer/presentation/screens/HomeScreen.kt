@@ -160,9 +160,9 @@ fun HomeScreen(controller: AppController) {
                 SecondaryButton("导入题库", onClick = { controller.openImport(SampleBank.json) }, leading = "＋")
                 // 只在真的有待复核记录时出现：一个永远显示"0"的入口只是噪声，
                 // 而"有几条"本身就是它该不该被看见的信息
-                if (controller.reviewPending > 0) {
+                if (controller.review.pending > 0) {
                     SecondaryButton(
-                        "复核 ${controller.reviewPending}",
+                        "复核 ${controller.review.pending}",
                         onClick = controller::openReview,
                         leading = "↻",
                     )

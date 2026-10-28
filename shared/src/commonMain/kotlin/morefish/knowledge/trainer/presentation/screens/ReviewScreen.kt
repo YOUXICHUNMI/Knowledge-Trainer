@@ -67,9 +67,9 @@ fun ReviewScreen(controller: AppController) {
     ) {
         BannerHost(controller.banner, controller::dismissBanner)
 
-        val plan = controller.reviewPlan
+        val plan = controller.review.plan
         when {
-            plan == null && controller.reviewBusy -> BusyPanel()
+            plan == null && controller.review.busy -> BusyPanel()
             plan == null -> EmptyState(
                 title = "还没有扫描",
                 hint = "复核要逐题重算一遍历史，所以不在进首页时做。点一下右上角刷新或重新进入本页即可。",
@@ -153,15 +153,15 @@ private fun SummaryPanel(controller: AppController, plan: ReviewPlan) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             SecondaryButton(
                 "全部按新答案",
-                onClick = { controller.decideAllReviews(true) },
-                enabled = !controller.reviewBusy,
+                onClick = { controller.review.decideAll(true) },
+                enabled = !controller.review.busy,
             )
             GhostButton(
                 "全部维持当时判定",
-                onClick = { controller.decideAllReviews(false) },
-                enabled = !controller.reviewBusy,
+                onClick = { controller.review.decideAll(false) },
+                enabled = !controller.review.busy,
             )
-            if (controller.reviewBusy) {
+            if (controller.review.busy) {
                 Spacer(Modifier.width(4.dp))
                 Text("处理中…", style = MaterialTheme.typography.labelSmall, color = Palette.Faint)
             }
@@ -229,13 +229,13 @@ private fun CandidateRow(controller: AppController, candidate: ReviewCandidate, 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             SecondaryButton(
                 "按新答案：${candidate.suggestedVerdict.label}",
-                onClick = { controller.decideReview(attempt.attemptId, accept = true) },
-                enabled = !controller.reviewBusy,
+                onClick = { controller.review.decide(attempt.attemptId, accept = true) },
+                enabled = !controller.review.busy,
             )
             GhostButton(
                 "维持：${candidate.previousVerdict.label}",
-                onClick = { controller.decideReview(attempt.attemptId, accept = false) },
-                enabled = !controller.reviewBusy,
+                onClick = { controller.review.decide(attempt.attemptId, accept = false) },
+                enabled = !controller.review.busy,
             )
         }
     }

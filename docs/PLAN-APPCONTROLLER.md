@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2786 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786） |
+| `AppController.kt` | 2716 行（3371 → 3219 → 3160 → 2972 → 2829 → 2786 → 2716） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，617 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，618 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -31,7 +31,7 @@ presentation/
   setup/PracticeSetupController.kt ✅ 已拆
   ai/AiController.kt                ✅ 已拆
   editor/QuestionEditorController.kt ✅ 已拆
-  review/ReviewController.kt
+  review/ReviewController.kt        ✅ 已拆
   batch/BatchController.kt
   importing/ImportController.kt
   practice/PracticeController.kt
@@ -68,7 +68,7 @@ presentation/
 | 3 | 练习设置 | ~86 | `PracticeSetupScreen` | ✅ 已完成 |
 | 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | ✅ 已完成 |
 | 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | ✅ 已完成 |
-| 6 | 历史复核 | ~199 | `ReviewScreens` | 待做 |
+| 6 | 历史复核 | ~199 | `ReviewScreens` | ✅ 已完成 |
 | 7 | 批量队列 | ~211 | `AiScreen` | 待做 |
 | 8 | 导入（JSON / .qbank / .qbext / .qbpatch） | ~235 | `ImportScreen` | 待做 |
 | 9 | 练习（作答 / 提交 / 下一题 / 会话） | ~196 | `PracticeScreen` | 待做 |
@@ -198,3 +198,27 @@ presentation/
   重复 ID 之所以必须拒收而不是覆盖：ID 是进度、复核、错题本匹配题目的唯一依据，
   撞了 ID 会让两套题面共享同一批作答记录，事后分不清哪条历史属于谁。
 - 文件从 2829 行降到 2786 行。
+
+## 已完成的第六刀（历史复核）
+
+- 新增 `presentation/review/ReviewController.kt`（163 行）：待复核清单、逐条表态、批量表态、
+  首页徽章数字，以及**原始历史与复核决定两份数据本身**。
+- 这一刀把"两份历史"的区别收了回来。`attempts` 文件存的是**当时按那时的标准**判成了什么，
+  复核决定另存一处，读取时才合并。此前那行 `AttemptReviews.apply(...)` 在 `loadAll` 与
+  `reloadHistory` 里**各写了一次** —— 两处漏一处，重读（恢复备份、装扩展包、手动刷新）
+  之后统计与错题本就会退回旧判定，而界面上完全看不出区别。
+  现在只有 `readHistory()` 一处合并，组合根一律 `history = review.readHistory()`。
+- 与前几刀不同，它保管的是**共享内核的数据**（原始历史还被引用自检与备份概况读）。
+  所以两个只读出口单独给了名字：`rawAttempts` 与 `decisionCount` —— 让"备份报的是
+  **历史文件**里有几条"这件事在调用点上就能读出来，而不是靠记得"这里的 history 是合并后的"。
+- 徽章数字仍走便宜的那条路（只看修订日志里的 `answerChangedIds`，不解析题库内容），
+  所以它可能比进页面后的清单条数多：答案变了但重算结果相同，不算候选。
+  这条差异写在 [pending] 的 KDoc 里，因为"徽章显示 3、点进去只有 1"很容易被当成 bug。
+- 导航仍留在组合根：`openReview`（置页 + `review.scan()`）、`closeReview`（`goHome()`）。
+  清单在返回时**不清**：用户可能去题库里看一眼再回来，重扫一遍等于让他重新等一次。
+- 调用方 33 行：`ReviewScreen` 11、`ReviewFlowTest` 16（另加 1 个新用例）、
+  `ScreenshotTest` 4、`HomeScreen` 2。
+- 新增用例 `aFullReloadKeepsTheDecisionAndStillReportsTheRawHistory`：表态后整库重读，
+  生效判定不能丢、徽章不重新冒出来，而备份概况仍报历史文件的条数。
+  这条钉的正是"合并只有一处"——它是这次拆分唯一可能悄悄引入的回归。
+- 文件从 2786 行降到 2716 行；617 → 618 用例全绿，行为不变。

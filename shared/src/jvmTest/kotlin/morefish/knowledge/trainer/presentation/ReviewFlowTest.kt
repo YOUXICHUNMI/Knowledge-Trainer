@@ -117,7 +117,7 @@ class ReviewFlowTest {
         val record = c.history.single()
         assertEquals(Verdict.CORRECT, record.verdict, "装补丁这一步不许改判定")
         assertNull(record.review, "没有用户表态就不该有复核痕迹")
-        assertEquals(1, c.reviewPending, "首页徽章应该提示有 1 条待复核")
+        assertEquals(1, c.review.pending, "首页徽章应该提示有 1 条待复核")
     }
 
     @Test
@@ -127,7 +127,7 @@ class ReviewFlowTest {
         c.openReview()
         testScheduler.advanceUntilIdle()
 
-        val plan = assertNotNull(c.reviewPlan)
+        val plan = assertNotNull(c.review.plan)
         assertEquals(1, plan.count)
         val candidate = plan.candidates.single()
         assertEquals(Verdict.CORRECT, candidate.previousVerdict)
@@ -146,7 +146,7 @@ class ReviewFlowTest {
         c.openReview()
         testScheduler.advanceUntilIdle()
 
-        c.decideReview(c.history.single().attemptId, accept = true)
+        c.review.decide(c.history.single().attemptId, accept = true)
         testScheduler.advanceUntilIdle()
 
         val merged = c.history.single()
@@ -157,7 +157,7 @@ class ReviewFlowTest {
         assertEquals(Verdict.INCORRECT, mark.to)
         assertTrue(mark.changed)
         assertEquals(1, c.historyView.wrongEntries.size, "改判为错误，错题本应该跟着出现这道题")
-        assertEquals(0, c.reviewPending, "处理过就不再算待复核")
+        assertEquals(0, c.review.pending, "处理过就不再算待复核")
 
         // 原始历史文件那一行仍然是当时的判定
         val raw = assertNotNull(JsonAttemptRepository(storage).all().singleOrNull())
@@ -173,7 +173,7 @@ class ReviewFlowTest {
         c.openReview()
         testScheduler.advanceUntilIdle()
 
-        c.decideReview(c.history.single().attemptId, accept = false)
+        c.review.decide(c.history.single().attemptId, accept = false)
         testScheduler.advanceUntilIdle()
 
         val merged = c.history.single()
@@ -182,13 +182,13 @@ class ReviewFlowTest {
         assertEquals(ReviewDecision.RESTORE, mark.decision)
         assertTrue(!mark.changed)
         assertTrue(c.historyView.wrongEntries.isEmpty())
-        assertTrue(assertNotNull(c.reviewPlan).isEmpty, "表态过的记录要从列表里消失")
-        assertEquals(0, c.reviewPending)
+        assertTrue(assertNotNull(c.review.plan).isEmpty, "表态过的记录要从列表里消失")
+        assertEquals(0, c.review.pending)
 
         // 再进一次页也不该重新出现
         c.openReview()
         testScheduler.advanceUntilIdle()
-        assertTrue(assertNotNull(c.reviewPlan).isEmpty)
+        assertTrue(assertNotNull(c.review.plan).isEmpty)
     }
 
     @Test
@@ -201,13 +201,13 @@ class ReviewFlowTest {
         )
         c.openReview()
         testScheduler.advanceUntilIdle()
-        assertEquals(3, assertNotNull(c.reviewPlan).count)
+        assertEquals(3, assertNotNull(c.review.plan).count)
 
-        c.decideAllReviews(accept = true)
+        c.review.decideAll(accept = true)
         testScheduler.advanceUntilIdle()
 
         assertEquals(3, c.history.count { it.verdict == Verdict.INCORRECT })
-        assertTrue(assertNotNull(c.reviewPlan).isEmpty)
+        assertTrue(assertNotNull(c.review.plan).isEmpty)
         val banner = assertNotNull(c.banner)
         assertTrue(banner.text.contains("3 条"), "实际：${banner.text}")
         assertTrue(banner.text.contains("没有改写"), "要明说历史记录本身没被改写")
@@ -221,13 +221,13 @@ class ReviewFlowTest {
         testScheduler.advanceUntilIdle()
         val attemptId = c.history.single().attemptId
 
-        c.decideReview(attemptId, accept = true)
+        c.review.decide(attemptId, accept = true)
         testScheduler.advanceUntilIdle()
 
         // 再进一次页：同一版题目已经表过态，不该再写一条决定
         c.openReview()
         testScheduler.advanceUntilIdle()
-        assertTrue(assertNotNull(c.reviewPlan).isEmpty)
+        assertTrue(assertNotNull(c.review.plan).isEmpty)
         assertEquals(Verdict.INCORRECT, c.history.single().verdict)
         assertEquals(1, JsonReviewRepository(storage).all().size, "重复打开复核页不能反复追加决定")
     }
@@ -236,10 +236,10 @@ class ReviewFlowTest {
     fun noPatchMeansNothingToReview() = runTest {
         val storage = InMemoryTextStorage()
         val c = controllerWith(storage, testScheduler, applyPatch = false)
-        assertEquals(0, c.reviewPending, "没装过补丁就没有'答案变了'这回事")
+        assertEquals(0, c.review.pending, "没装过补丁就没有'答案变了'这回事")
         c.openReview()
         testScheduler.advanceUntilIdle()
-        assertTrue(assertNotNull(c.reviewPlan).isEmpty)
+        assertTrue(assertNotNull(c.review.plan).isEmpty)
     }
 
     @Test
@@ -251,8 +251,32 @@ class ReviewFlowTest {
         c.openReview()
         testScheduler.advanceUntilIdle()
 
-        val plan = assertNotNull(c.reviewPlan)
+        val plan = assertNotNull(c.review.plan)
         assertTrue(plan.isEmpty)
         assertEquals(1, plan.unreviewable, "做不了复核的记录要报数，不能安静地少一条")
+    }
+
+    @Test
+    fun aFullReloadKeepsTheDecisionAndStillReportsTheRawHistory() = runTest {
+        val storage = InMemoryTextStorage()
+        val c = controllerWith(storage, testScheduler)
+        c.openReview()
+        testScheduler.advanceUntilIdle()
+
+        c.review.decide(c.history.single().attemptId, accept = true)
+        testScheduler.advanceUntilIdle()
+
+        // 整体重读一遍（恢复备份、装扩展包、手动刷新都走这条路）。
+        // 套上复核结果这一步以前在 loadAll 与 reloadHistory 里各写一行，
+        // 只要漏掉其中一处，重读之后统计就会悄悄退回旧判定，而界面上看不出区别。
+        c.refresh()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(Verdict.INCORRECT, c.history.single().verdict, "重读之后生效判定不能丢")
+        assertEquals(0, c.review.pending, "表过态的记录重读之后也不该重新冒出来")
+
+        // 备份概况报的是**历史文件**的条数与决定条数，不是合并后的视图
+        assertEquals(1, c.backupSummary.attempts, "复核不改写历史文件，条数不该变")
+        assertEquals(1, c.backupSummary.reviews)
     }
 }

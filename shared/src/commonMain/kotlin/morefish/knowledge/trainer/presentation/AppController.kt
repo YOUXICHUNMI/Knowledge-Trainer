@@ -101,9 +101,6 @@ import morefish.knowledge.trainer.domain.model.validate
 import morefish.knowledge.trainer.domain.model.WrongQuestionEntry
 import morefish.knowledge.trainer.domain.model.countForBank
 import morefish.knowledge.trainer.domain.model.forQuestion
-import morefish.knowledge.trainer.domain.practice.AttemptReview
-import morefish.knowledge.trainer.domain.practice.AttemptReviews
-import morefish.knowledge.trainer.domain.practice.ReviewPlan
 import morefish.knowledge.trainer.domain.patch.BankRevision
 import morefish.knowledge.trainer.domain.patch.PatchApply
 import morefish.knowledge.trainer.domain.patch.PatchChangeKind
@@ -113,6 +110,7 @@ import morefish.knowledge.trainer.presentation.ai.AiController
 import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
 import morefish.knowledge.trainer.presentation.editor.QuestionEditorController
 import morefish.knowledge.trainer.presentation.history.HistoryController
+import morefish.knowledge.trainer.presentation.review.ReviewController
 import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
 import morefish.knowledge.trainer.presentation.setup.SetupStart
 import morefish.knowledge.trainer.presentation.toolbox.ToolboxController
@@ -357,6 +355,34 @@ class AppController(
      * 它拿的是 `history` 的读取器而不是快照，所以不会出现两份历史。
      */
     val historyView = HistoryController(clock = deps.clock) { history }
+
+    /**
+     * 历史复核：待复核清单、逐条表态、首页徽章。
+     *
+     * 它同时保管"原始历史"与"复核决定"两份数据，[readHistory] 负责把它们合并成
+     * 生效历史 —— 合并只在这一处发生。以前 `loadAll` 与 `reloadHistory` 各写一行，
+     * 漏掉任何一处，统计与错题本就会停在旧判定上而界面看不出区别。
+     */
+    val review = ReviewController(
+        useCase = reviewHistory,
+        attempts = deps.attemptRepository,
+        reviews = deps.reviewRepository,
+        scope = scope,
+        latestRevisions = { latestRevisions },
+        onHistoryChanged = { reloadHistory() },
+        onNotice = { text, isError -> banner = Banner(text, isError) },
+    )
+
+    /** 打开复核页：清单要读题库内容，所以这时候才真的重算一遍。 */
+    fun openReview() {
+        screen = Screen.REVIEW
+        review.scan()
+    }
+
+    fun closeReview() {
+        // 清单留着不清：用户可能是去题库里看一眼再回来，重扫一遍会让他重新等一次
+        goHome()
+    }
 
     /**
      * AI 讲解：配置、用量、记录与审核。
@@ -718,98 +744,6 @@ class AppController(
     var latestRevisions by mutableStateOf<Map<String, BankRevision>>(emptyMap())
         private set
 
-    // ---- 历史复核（P8 第二块）----
-
-    /**
-     * 原始历史（未经复核合并）。复核要拿它跟"现在的标准"比，
-     * 而 [history] 已经被复核结果改写过 —— 直接拿 [history] 比会把"我改过的判定"
-     * 当成"当时判的"，第二次复核就永远看不出差异。
-     */
-    private var attemptLog: List<AttemptRecord> = emptyList()
-
-    /** 已写入的复核决定。 */
-    private var attemptReviews: List<AttemptReview> = emptyList()
-
-    /** 待复核清单。null = 还没扫过（扫描要读题库内容，不在每次刷新时做）。 */
-    var reviewPlan by mutableStateOf<ReviewPlan?>(null)
-        private set
-
-    var reviewBusy by mutableStateOf(false)
-        private set
-
-    /**
-     * 首页徽章上的数字：有多少条历史落在"答案改过、且我还没表过态"的题上。
-     *
-     * 只用已经读进来的历史 + 修订日志算，**不碰题库内容** ——
-     * 首页刷新不该为了一个徽章去解析十万道题。真正的判定差异等用户点进去再算。
-     */
-    val reviewPending: Int
-        get() {
-            if (attemptLog.isEmpty() || latestRevisions.isEmpty()) return 0
-            val decided = attemptReviews.mapTo(mutableSetOf()) { it.attemptId }
-            return attemptLog.count { attempt ->
-                if (attempt.attemptId in decided) return@count false
-                if (attempt.verdict == Verdict.ABANDONED) return@count false
-                latestRevisions[attempt.bankId]?.answerChangedIds?.contains(attempt.questionId) == true
-            }
-        }
-
-    /** 打开复核页：这时候才真的重算一遍。 */
-    fun openReview() {
-        screen = Screen.REVIEW
-        rescanReviews()
-    }
-
-    private fun rescanReviews() {
-        scope.launch {
-            reviewBusy = true
-            reviewPlan = reviewHistory.plan()
-            reviewBusy = false
-        }
-    }
-
-    /**
-     * 对一条记录表态。[accept] = 按现在的标准重算，否则维持当时的判定。
-     *
-     * 两条路都写一条决定：只接受不保留，会让"我看过了，不改"变成每次打开都要重看一遍。
-     */
-    fun decideReview(attemptId: String, accept: Boolean) {
-        scope.launch {
-            val written = reviewHistory.decide(attemptId, accept)
-            if (written == null) {
-                banner = Banner("这条记录已经不需要复核了（题目可能又被改过），列表已更新", isError = false)
-                rescanReviews()
-                return@launch
-            }
-            reloadHistory()
-            // 局部删除而不是整表重扫：用户可能正在一条条处理，列表不该突然回到顶部
-            reviewPlan = reviewPlan?.let { plan ->
-                plan.copy(candidates = plan.candidates.filterNot { it.attempt.attemptId == attemptId })
-            }
-        }
-    }
-
-    fun decideAllReviews(accept: Boolean) {
-        scope.launch {
-            reviewBusy = true
-            val n = reviewHistory.decideAll(accept)
-            reloadHistory()
-            reviewPlan = ReviewPlan(emptyList())
-            reviewBusy = false
-            banner = Banner(
-                if (n == 0) "没有需要处理的记录" else
-                    if (accept) "已按新答案复核 $n 条记录：统计与错题本已跟着变，历史记录本身没有改写"
-                    else "已保留 $n 条记录的当时判定：它们不会再出现在待复核里",
-                isError = false,
-            )
-        }
-    }
-
-    fun closeReview() {
-        // 清单留着不清：用户可能是去题库里看一眼再回来，重扫一遍会让他重新等一次
-        goHome()
-    }
-
     /**
      * 重读历史并重算派生状态。
      *
@@ -817,9 +751,7 @@ class AppController(
      * 复核是"逐条处理"的动作，每点一下就把整页重来一遍会让人没法一条条看完。
      */
     private suspend fun reloadHistory() {
-        attemptLog = deps.attemptRepository.all()
-        attemptReviews = deps.reviewRepository.all()
-        history = AttemptReviews.apply(attemptLog, attemptReviews)
+        history = review.readHistory()
         studyStats = StudyStats.derive(history)
         // 按语言缓存的那份统计作废：否则设置页会拿复核前的"未练习"数去抽题
         setup.invalidateStats()
@@ -949,12 +881,10 @@ class AppController(
     private suspend fun loadAll() {
         banks = deps.bankRepository.list()
         latestRevisions = deps.revisionRepository.latestAll()
-        attemptLog = deps.attemptRepository.all()
-        attemptReviews = deps.reviewRepository.all()
         // 历史读进来就套上复核结果：统计、错题本、日历因此不需要知道复核存在
-        history = AttemptReviews.apply(attemptLog, attemptReviews)
+        history = review.readHistory()
         // 题库变了（装了补丁 / 新建了题），上一份复核清单就作废，进页面时重扫
-        reviewPlan = null
+        review.invalidate()
         studyStats = StudyStats.derive(history)
         // 历史变了，按语言缓存的那份统计就作废：否则设置页会拿旧的"未练习"数去抽题
         setup.invalidateStats()
@@ -1384,7 +1314,7 @@ class AppController(
             graph = graph,
             notes = notes,
             extensions = extensions,
-            history = attemptLog,
+            history = review.rawAttempts,
             availablePaths = available,
         )
         backupAuditAtMillis = deps.clock.nowMillis()
@@ -1498,9 +1428,9 @@ class AppController(
         get() = BackupSummary(
             banks = banks.size,
             questions = banks.sumOf { it.questions.size },
-            attempts = attemptLog.size,
+            attempts = review.rawAttempts.size,
             notes = notes.size,
-            reviews = attemptReviews.size,
+            reviews = review.decisionCount,
         )
 
     fun openBackup() {

@@ -951,17 +951,17 @@ class ScreenshotTest {
         controller.refresh()
         controller.importDroppedFile("starter-v2.qbpatch", exampleFile("starter-v2.qbpatch"))
         controller.applyPickedPatch()
-        println("待复核=${controller.reviewPending}")
+        println("待复核=${controller.review.pending}")
         shot("38-review-badge", height = 780) { AppContent(controller) }
 
         controller.openReview()
-        println("候选=${controller.reviewPlan?.count} 不可复核=${controller.reviewPlan?.unreviewable}")
+        println("候选=${controller.review.plan?.count} 不可复核=${controller.review.plan?.unreviewable}")
         shot("39-review-list", height = 880) { AppContent(controller) }
 
-        controller.decideAllReviews(accept = true)
+        controller.review.decideAll(accept = true)
         // 表完态回到首页：要看的是"最近提交"里那两条判定换了、并且标着是复核改的
         controller.closeReview()
-        println("改判后判定=${controller.history.map { it.verdict }} 待复核=${controller.reviewPending}")
+        println("改判后判定=${controller.history.map { it.verdict }} 待复核=${controller.review.pending}")
         shot("40-review-decided", height = 1560) { AppContent(controller) }
     }
 

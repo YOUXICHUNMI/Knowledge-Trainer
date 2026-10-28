@@ -30,7 +30,7 @@ application 不依赖界面、界面只在组合根接触具体实现，已有�
 [docs/STATUS-P10.md](./docs/STATUS-P10.md)。
 
 **回归不再靠人记得跑**：`.github/workflows/ci.yml` 在每次 push / PR 上跑两组必检 ——
-`./gradlew :shared:jvmTest`（617 个用例，含架构验收）与 `python tools/verify/run_all.py`
+`./gradlew :shared:jvmTest`（618 个用例，含架构验收）与 `python tools/verify/run_all.py`
 （坏包 / 扩展包 / 补丁 / 制包 Skill 自检 / 可复现构建 / 样本包校验，共 12 项）。
 清单只维护一份：本地跑的就是 CI 跑的那一条命令。Android 与桌面打包放在手动触发里，
 因为它们的产物不是每天变，却要拉 SDK 与 WiX。
