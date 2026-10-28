@@ -10,7 +10,7 @@
 | `AppController.kt` | 3160 行（拆工具箱前 3371，拆历史前 3219） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，608 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，614 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -118,7 +118,10 @@ presentation/
   的学习记录从日历上消失）。
 - 调用方改动：`HistoryScreen` 11 处、`HomeScreen` 4 处、`MultiLocalePracticeTest` 10 处、
   `ReviewFlowTest` 2 处、`ScreenshotTest` 1 处。
-- 文件从 3219 行降到 3160 行；608 → 613 用例全绿，行为不变。
+- 文件从 3219 行降到 3160 行；608 → 614 用例全绿（新增 7 例，替换 1 例），行为不变。
+
+拆完这一刀才发现的日期范围问题（"今天"其实是最近 24 小时）单独一次提交修掉，
+没有混进这一刀的 diff：拆分提交里出现行为变化，回归就定位不到是哪一刀引起的。
 
 顺带删掉了一处遗留：`/** 工具箱的两个面板。 */` 这行 KDoc 在第一刀之后失去了宿主，
 挂在了 `GraphPickSide` 上面，读起来像"图谱编辑器有两个面板"。

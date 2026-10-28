@@ -2,6 +2,7 @@ package morefish.knowledge.trainer.domain.practice
 
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import morefish.knowledge.trainer.domain.model.AttemptRecord
 import morefish.knowledge.trainer.domain.model.Verdict
@@ -20,6 +21,15 @@ object LocalDates {
 
     fun todayEpochDay(nowMillis: Long, zone: TimeZone = TimeZone.currentSystemDefault()): Long =
         epochDayOf(nowMillis, zone)
+
+    /**
+     * 某个本地日历日的 00:00 对应的时刻。
+     *
+     * 不能写成 `epochDay * 86_400_000`：那是 UTC 零点，在东八区会落到当天 08:00，
+     * 于是"今天"的窗口从早上八点才开始。
+     */
+    fun startOfDayMillis(epochDay: Long, zone: TimeZone = TimeZone.currentSystemDefault()): Long =
+        LocalDate.fromEpochDays(epochDay).atStartOfDayIn(zone).toEpochMilliseconds()
 
     /** 0 = 周一 … 6 = 周日。1970-01-01 是周四，所以偏移 3 天。 */
     fun weekdayIndex(epochDay: Long): Int {

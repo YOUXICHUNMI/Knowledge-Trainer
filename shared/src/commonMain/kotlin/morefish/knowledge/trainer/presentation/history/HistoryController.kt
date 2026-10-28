@@ -3,20 +3,35 @@ package morefish.knowledge.trainer.presentation.history
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.datetime.TimeZone
 import morefish.knowledge.trainer.application.port.WallClock
 import morefish.knowledge.trainer.domain.i18n.LocaleTag
 import morefish.knowledge.trainer.domain.model.AttemptRecord
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.domain.model.WrongQuestionEntry
 import morefish.knowledge.trainer.domain.model.WrongQuestions
+import morefish.knowledge.trainer.domain.practice.LocalDates
 import morefish.knowledge.trainer.domain.practice.StudyCalendar
 
-/** 历史页的日期范围筛选。null 表示全部。 */
+/**
+ * 历史页的日期范围筛选。
+ *
+ * [days] 是**含今天在内的日历日数**，不是"往前推 24×N 小时"：
+ * 滚动窗口会让"今天"把昨天下午的记录也算进来（现在 10 点，窗口回到昨天 10 点），
+ * 而标签上写着今天。日历日才和界面上的字对得上。
+ */
 enum class HistoryRange(val days: Int?, val label: String) {
     TODAY(1, "今天"),
     WEEK(7, "近 7 天"),
     MONTH(30, "近 30 天"),
-    ALL(null, "全部"),
+    ALL(null, "全部");
+
+    /** 窗口起点（本地日历日的 00:00）；null = 不限。 */
+    fun cutoffMillis(nowMillis: Long, zone: TimeZone): Long? {
+        val span = days ?: return null
+        val today = LocalDates.todayEpochDay(nowMillis, zone)
+        return LocalDates.startOfDayMillis(today - (span - 1), zone)
+    }
 }
 
 /**
@@ -36,6 +51,8 @@ enum class HistoryRange(val days: Int?, val label: String) {
  */
 class HistoryController(
     private val clock: WallClock,
+    /** 日历与日期范围都按它切天。显式传入是为了测试能固定时区，而不是跟着跑测试的机器走。 */
+    private val zone: TimeZone = TimeZone.currentSystemDefault(),
     private val history: () -> List<AttemptRecord>,
 ) {
 
@@ -87,7 +104,7 @@ class HistoryController(
      */
     val filtered: List<AttemptRecord>
         get() {
-            val cutoff = range.days?.let { clock.nowMillis() - it * 86_400_000L }
+            val cutoff = range.cutoffMillis(clock.nowMillis(), zone)
             return history()
                 .asSequence()
                 .filter { cutoff == null || it.submittedAtMillis >= cutoff }
@@ -126,6 +143,6 @@ class HistoryController(
      */
     fun update(history: List<AttemptRecord>) {
         wrongEntries = WrongQuestions.derive(history)
-        calendar = StudyCalendar.build(history, clock.nowMillis())
+        calendar = StudyCalendar.build(history, clock.nowMillis(), zone = zone)
     }
 }
