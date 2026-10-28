@@ -7,10 +7,10 @@
 
 | 项 | 数值 |
 |---|---|
-| `AppController.kt` | 2972 行（3371 → 3219 → 3160 → 2972） |
+| `AppController.kt` | 2829 行（3371 → 3219 → 3160 → 2972 → 2829） |
 | 公开成员 | 约 190 个（属性 + 方法） |
 | 接触 infrastructure 的界面文件 | 只有它（架构测试白名单硬约束） |
-| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，615 个 JVM 用例 |
+| 覆盖它的测试 | `AppControllerTest`、`PracticeLoopTest`、`ScreenshotTest` 等，616 个 JVM 用例 |
 
 它同时承担四件事，混在一起才是问题：
 
@@ -29,7 +29,7 @@ presentation/
   toolbox/ToolboxController.kt      ✅ 已拆
   history/HistoryController.kt      ✅ 已拆
   setup/PracticeSetupController.kt ✅ 已拆
-  ai/AiController.kt
+  ai/AiController.kt                ✅ 已拆
   editor/QuestionEditorController.kt
   review/ReviewController.kt
   batch/BatchController.kt
@@ -66,7 +66,7 @@ presentation/
 | 1 | 工具箱（计算器 + 单位换算） | ~150 | `ToolboxScreen` | ✅ 已完成 |
 | 2 | 历史与日历 | ~82 | `HistoryScreen` | ✅ 已完成 |
 | 3 | 练习设置 | ~86 | `PracticeSetupScreen` | ✅ 已完成 |
-| 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | 待做 |
+| 4 | AI 讲解 | ~141 | `AiScreen`、`PracticeScreen` | ✅ 已完成 |
 | 5 | 离线手工编辑 | ~147 | `QuestionEditorScreen` | 待做 |
 | 6 | 历史复核 | ~199 | `ReviewScreens` | 待做 |
 | 7 | 批量队列 | ~211 | `AiScreen` | 待做 |
@@ -147,3 +147,33 @@ presentation/
 - 新增用例 `saysTranslationIsMissingRatherThanPretendingThereIsNoQuestion`：
   整库没有某语言译文时，横幅要说"这门语言没译文"，而不是含糊的"没有可练习的题目"。
 - 文件从 3160 行降到 2972 行；614 → 615 用例全绿，行为不变。
+
+## 已完成的第四刀（AI 讲解）
+
+- 新增 `presentation/ai/AiController.kt`（244 行）：接入配置、密钥有无、今日用量、
+  讲解记录、生成中标记、面板展开，连同"哪一道题该用哪种语言"的回退规则一起搬走，
+  审核（采纳 / 弃用 / 打回）也归它。
+- 这是第一刀**必须自己写盘**的拆分：配置、密钥、讲解记录、用量账本都是本功能自己的
+  数据，换个地方存就是两份真相。前几刀"子控制器不写盘"针对的是**别人的**数据
+  （会话、题库、历史），那些仍归组合根。同一条规则在不同功能上边界不同，写下来
+  比"统一照着前一次抄"更靠谱。
+- 与前几刀相同的是**不导航、不弹提示**：`openAi` / `closeAi` 留在组合根；要说的话经
+  `onNotice(text, isError)` 交回去，`text = null` 表示"没话说，顺手把上一条收起来"
+  （命中缓存就是这种情形：既不是新生成也不是失败，让"已生成"继续挂着像是又花了钱）。
+  提示不做成状态而做成回调，是因为这里不该攒"待显示的横幅"，否则会出现
+  "已经换页了、横幅才冒出来"。
+- 当前题目通过 `() -> CurrentQuestion?` 读取器传入，与历史页同一套做法，但**代价更高**：
+  缓存键按"题库 + 题目 + 语言 + 修订 + 内容指纹 + 模型"算，快照错位不只是显示错，
+  而是让用户为上一道题再付一次钱。会话结构不进 AI 包 —— 组合根只把
+  `bankId / question / sessionLocale / bank / attempt` 五样递过去。
+- 组合根留下的只有三件：`openAi` / `closeAi` 两条导航、`aiTargetOf()` 这段搬运
+  （其中按 `questionId` 再核一次作答记录，因为提交反馈与当前题目之间隔着一次"下一题"）、
+  以及 `refreshAi()` 这个"一次刷新喂两处"的入口（讲解 + 批量队列）。等批量队列也搬出去，
+  这个入口改成调它的 `refresh()` 即可，调用点不用再动。
+- 调用方 57 行：`PracticeScreen` 17、`AiScreen` 16、`AiBatchFlowTest` 11、
+  `ScreenshotTest` 4、`BatchScreen` 4、`HomeScreen` 1，全部是
+  `controller.aiXxx` → `controller.ai.xxx`。
+- 新增用例 `explanationDoesNotFollowYouToTheNextQuestion`：答完第一题生成讲解，
+  切到第二题后缓存键必须变、`currentExplanation` 必须为空、已有记录不能跟着冒充；
+  第二题没作答也不许发请求。这条钉的正是"读取器而不是快照"这个决定。
+- 文件从 2972 行降到 2829 行；615 → 616 用例全绿，行为不变。

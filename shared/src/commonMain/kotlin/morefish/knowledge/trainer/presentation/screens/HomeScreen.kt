@@ -186,7 +186,7 @@ fun HomeScreen(controller: AppController) {
                     leading = "⇄",
                 )
                 SecondaryButton(
-                    if (controller.aiRecords.isEmpty()) "AI 讲解" else "AI 讲解 ${controller.aiRecords.size}",
+                    if (controller.ai.records.isEmpty()) "AI 讲解" else "AI 讲解 ${controller.ai.records.size}",
                     onClick = controller::openAi,
                     leading = "✦",
                 )

@@ -58,11 +58,6 @@ import morefish.knowledge.trainer.application.usecase.SubmitOutcome
 import morefish.knowledge.trainer.domain.ai.AiBatchItem
 import morefish.knowledge.trainer.domain.ai.AiBatchJob
 import morefish.knowledge.trainer.domain.ai.AiBatchState
-import morefish.knowledge.trainer.domain.ai.AiConfig
-import morefish.knowledge.trainer.domain.ai.AiExplanation
-import morefish.knowledge.trainer.domain.ai.AiRecordState
-import morefish.knowledge.trainer.domain.ai.AiUsage
-import morefish.knowledge.trainer.domain.ai.formatMicros
 import morefish.knowledge.trainer.domain.backup.BackupCryptoIds
 import morefish.knowledge.trainer.domain.backup.BackupPreview
 import morefish.knowledge.trainer.domain.backup.BackupProblem
@@ -112,9 +107,10 @@ import morefish.knowledge.trainer.domain.practice.ReviewPlan
 import morefish.knowledge.trainer.domain.patch.BankRevision
 import morefish.knowledge.trainer.domain.patch.PatchApply
 import morefish.knowledge.trainer.domain.patch.PatchChangeKind
-import morefish.knowledge.trainer.domain.practice.LocalDates
 import morefish.knowledge.trainer.domain.practice.QuestionKey
 import morefish.knowledge.trainer.domain.practice.StudyStats
+import morefish.knowledge.trainer.presentation.ai.AiController
+import morefish.knowledge.trainer.presentation.ai.CurrentQuestion
 import morefish.knowledge.trainer.presentation.history.HistoryController
 import morefish.knowledge.trainer.presentation.setup.PracticeSetupController
 import morefish.knowledge.trainer.presentation.setup.SetupStart
@@ -361,6 +357,52 @@ class AppController(
      */
     val historyView = HistoryController(clock = deps.clock) { history }
 
+    /**
+     * AI 讲解：配置、用量、记录与审核。
+     *
+     * 它是目前唯一**自己写盘**的子控制器 —— 配置、密钥、讲解记录、用量是本功能自己的
+     * 数据。当前题目则相反，用读取器从会话里现取：切题、作答都发生在组合根里，
+     * 快照会让"题目换了、讲解还挂着上一题"，而缓存键按题目算，错配就是白花一次钱。
+     */
+    val ai = AiController(
+        repository = deps.aiRepository,
+        generate = generateExplanation,
+        clock = deps.clock,
+        scope = scope,
+        available = deps.aiHttpClient != null,
+        currentQuestion = ::aiTargetOf,
+        onNotice = { text, isError -> banner = text?.let { Banner(it, isError) } },
+    )
+
+    /** 打开 AI 页。刷新放在这里而不是构造时：配置可能被另一个窗口改过。 */
+    fun openAi() {
+        screen = Screen.AI
+        scope.launch { refreshAi() }
+    }
+
+    fun closeAi() {
+        screen = Screen.HOME
+    }
+
+    /**
+     * 会话里的"当前这题"，整理成 AI 侧认识的样子。
+     *
+     * 这里只做搬运与匹配，不做判断：语言回退、能不能生成、生成后怎么记，都在
+     * [AiController] 与用例里。作答记录要按 questionId 再对一次 ——
+     * 提交反馈与当前题目之间隔着一次"下一题"，直接拿来开会把上一题的答案发出去。
+     */
+    private fun aiTargetOf(): CurrentQuestion? {
+        val active = session ?: return null
+        val question = active.current?.question ?: return null
+        return CurrentQuestion(
+            bankId = active.bankId,
+            question = question,
+            sessionLocale = active.locale,
+            bank = banks.firstOrNull { it.bankId == active.bankId },
+            attempt = feedback?.attempt?.takeIf { it.questionId == question.questionId },
+        )
+    }
+
     var studyStats by mutableStateOf(StudyStats.Empty)
         private set
 
@@ -516,12 +558,12 @@ class AppController(
             banner = Banner("这个题库已经不在了", isError = true)
             return
         }
-        if (!aiConfig.configured) {
+        if (!ai.config.configured) {
             banner = Banner("先填好接口地址与模型，再排批量任务", isError = true)
             return
         }
         scope.launch {
-            val outcome = runBatch.plan(bank, locale, aiConfig.model)
+            val outcome = runBatch.plan(bank, locale, ai.config.model)
             if (outcome.items.isEmpty()) {
                 banner = Banner(
                     when {
@@ -539,7 +581,7 @@ class AppController(
                 jobId = Ids.prefixed("batch"),
                 bankId = bank.bankId,
                 bankTitle = bank.title,
-                model = aiConfig.model,
+                model = ai.config.model,
                 locale = locale,
                 items = outcome.items,
                 state = AiBatchState.QUEUED,
@@ -876,63 +918,19 @@ class AppController(
 
     // ---- 首次加载 ----
 
-    // ---- AI 讲解（P7）----
-
-    /** 已保存的接入配置。界面上的表单是它的草稿，点保存才回到这里。 */
-    var aiConfig by mutableStateOf(AiConfig())
-        private set
-
-    /** 本机是否存着密钥。不保存密钥本身，界面只需要知道"有没有"。 */
-    var aiHasKey by mutableStateOf(false)
-        private set
-
-    var aiUsageToday by mutableStateOf(AiUsage())
-        private set
-
-    /** 讲解记录（缓存 + 审核留档），按更新时间倒序。 */
-    var aiRecords by mutableStateOf<List<AiExplanation>>(emptyList())
-        private set
-
-    var aiBusy by mutableStateOf(false)
-        private set
-
-    /** 练习页的讲解面板是否展开。生成中也会自动展开，否则用户看不到进度。 */
-    var aiPanelOpen by mutableStateOf(false)
-        private set
-
-    /** 当前题目是否已经作答。没作答就看讲解等于提前看答案，入口会拦住。 */
-    private val currentQuestionAnswered: Boolean
-        get() = feedback?.attempt?.questionId == session?.current?.question?.questionId
-
-    /** 平台是否接入了 HTTP 传输。没有的话整块 AI 只是"不可用"，不影响其他功能。 */
-    val aiAvailable: Boolean get() = deps.aiHttpClient != null
-
-    /** 当前这道题在该模型下的缓存键；没有题目时为 null。 */
-    val aiCurrentKey: String?
-        get() {
-            val active = session ?: return null
-            val question = active.current?.question ?: return null
-            if (aiConfig.model.isBlank()) return null
-            return AiExplanation.keyFor(
-                bankId = active.bankId,
-                questionId = question.questionId,
-                locale = aiLocaleOf(question),
-                questionRevision = question.contentRevision,
-                contentFingerprint = question.contentFingerprint(),
-                model = aiConfig.model,
-            )
-        }
-
-    val aiCurrentExplanation: AiExplanation?
-        get() {
-            val key = aiCurrentKey ?: return null
-            return aiRecords.firstOrNull { it.key == key }
-        }
-
-    // ---- 首次加载 ----
-
     fun refresh() {
         scope.launch { loadAll() }
+    }
+
+    /**
+     * 一次刷新同时喂饱两处：讲解（配置 / 密钥 / 用量 / 记录）与批量队列。
+     *
+     * 它们读的是同一个仓库、同一个时刻，分两次刷新只会让界面先看到一半新数据。
+     * 等批量队列也搬出去，这里改成调它的 `refresh()` 即可，调用点不用再动。
+     */
+    private suspend fun refreshAi() {
+        ai.refresh()
+        aiJobs = deps.aiBatchRepository.jobs()
     }
 
     /**
@@ -1726,147 +1724,6 @@ class AppController(
             backupBusy = false
         }
     }
-
-    // ---- AI 讲解 ----
-
-    fun openAi() {
-        screen = Screen.AI
-        scope.launch { refreshAi() }
-    }
-
-    fun closeAi() {
-        screen = Screen.HOME
-    }
-
-    private suspend fun refreshAi() {
-        aiConfig = deps.aiRepository.config()
-        aiHasKey = !deps.aiRepository.credential().isNullOrBlank()
-        aiUsageToday = deps.aiRepository.usage(LocalDates.epochDayOf(deps.clock.nowMillis()))
-        aiRecords = deps.aiRepository.records()
-        aiJobs = deps.aiBatchRepository.jobs()
-    }
-
-    /**
-     * 保存配置。
-     *
-     * 密钥只在这次真的输入了才写入 —— 否则每次保存都会被空输入覆盖成空密钥。
-     * 关掉"记住密钥"会把已存的密钥删掉，而不是"不再读取它"（文件还在就等于还在）。
-     */
-    fun saveAiConfig(config: AiConfig, apiKeyDraft: String?) {
-        val cleared = config.baseUrl.isBlank() && config.model.isBlank()
-        val problems = if (cleared) emptyList() else config.validate()
-        if (problems.isNotEmpty()) {
-            banner = Banner(problems.first(), isError = true)
-            return
-        }
-        scope.launch {
-            deps.aiRepository.saveConfig(config)
-            val draft = apiKeyDraft?.trim().orEmpty()
-            when {
-                draft.isNotEmpty() -> deps.aiRepository.saveCredential(draft)
-                !config.rememberKey -> deps.aiRepository.saveCredential("")
-            }
-            refreshAi()
-            banner = Banner(
-                when {
-                    cleared -> "AI 已关闭，其余功能不受影响"
-                    aiHasKey -> "AI 配置已保存"
-                    else -> "配置已保存，但还没有密钥 —— 公网服务用不了，本地模型可以不填"
-                },
-                isError = false,
-            )
-        }
-    }
-
-    fun clearAiCredential() {
-        scope.launch {
-            deps.aiRepository.saveCredential("")
-            refreshAi()
-            banner = Banner("已清除本机保存的密钥", isError = false)
-        }
-    }
-
-    fun toggleAiPanel() {
-        aiPanelOpen = !aiPanelOpen
-    }
-
-    /**
-     * 生成当前题的讲解。
-     *
-     * 三道闸门在用例里（配置 / 同意上传 / 预算），这里只多拦一道：
-     * **没作答就先看讲解 = 提前看答案**，对复习没有好处。
-     */
-    fun generateAiExplanation(force: Boolean = false) {
-        if (aiBusy) return
-        val input = aiPromptInputForCurrent()
-        if (input == null) {
-            banner = Banner("先打开一道题，再让 AI 讲解", isError = true)
-            return
-        }
-        if (!currentQuestionAnswered) {
-            banner = Banner("先作答再看讲解 —— 没作答就看，等于提前看答案", isError = true)
-            return
-        }
-        aiPanelOpen = true
-        aiBusy = true
-        scope.launch {
-            val outcome = generateExplanation.generate(input, force)
-            aiBusy = false
-            refreshAi()
-            banner = when (outcome) {
-                is AiGenerationOutcome.Ready ->
-                    if (outcome.fromCache) {
-                        null
-                    } else if (outcome.record.state == AiRecordState.NEEDS_REVIEW) {
-                        Banner("讲解已生成，但结构校验没通过（${outcome.record.error}），请自己判断是否可信", true)
-                    } else {
-                        Banner("讲解已生成（本次 ${formatMicros(outcome.record.costMicros)}）", false)
-                    }
-                is AiGenerationOutcome.Unavailable -> Banner(outcome.reason, true)
-                is AiGenerationOutcome.Blocked -> Banner(outcome.reason, true)
-                is AiGenerationOutcome.Failed -> Banner(
-                    if (outcome.retryable) "${outcome.reason}（不会自动重试，避免重复扣费）" else outcome.reason,
-                    true,
-                )
-            }
-        }
-    }
-
-    /** 人工处置：采纳 / 弃用 / 打回待复核。只有这三条路能改审核状态。 */
-    fun reviewAiCurrent(next: AiRecordState) {
-        val record = aiCurrentExplanation ?: return
-        scope.launch {
-            deps.aiRepository.save(record.reviewed(next, deps.clock.nowMillis()))
-            refreshAi()
-            banner = Banner(
-                when (next) {
-                    AiRecordState.APPROVED -> "已标记为有用"
-                    AiRecordState.REJECTED -> "已弃用，下次会重新生成"
-                    else -> "已打回待复核"
-                },
-                isError = false,
-            )
-        }
-    }
-
-    /** 组装当前题的请求。只带这道题本身：不带笔记、历史、其他题库。 */
-    private fun aiPromptInputForCurrent(): AiPromptInput? {
-        val active = session ?: return null
-        val question = active.current?.question ?: return null
-        val attempt = feedback?.attempt?.takeIf { it.questionId == question.questionId }
-        return AiPromptAssembler.inputOf(
-            bankId = active.bankId,
-            question = question,
-            locale = aiLocaleOf(question),
-            attempt = attempt,
-        )
-    }
-
-    private fun aiLocaleOf(question: Question): String = AiPromptAssembler.localeOf(
-        question = question,
-        sessionLocale = session?.locale,
-        bank = banks.firstOrNull { it.bankId == session?.bankId },
-    )
 
     // ---- 个人知识图谱 ----
 

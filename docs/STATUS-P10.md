@@ -114,7 +114,7 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **615 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 7） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **616 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 8） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
 | 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
@@ -156,7 +156,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，615 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，616 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -234,6 +234,23 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 新增用例：整库没有某语言译文时，横幅必须说"这门语言没译文"，而不是含糊的
 "没有可练习的题目"——后者会让人去翻题库，实际上只是没翻译。
 
+### 6. 组合根拆分：第四刀是 AI 讲解
+
+新增 `presentation/ai/AiController.kt`（244 行）：接入配置、密钥有无、今日用量、
+讲解记录、生成中标记、面板展开与人工审核。
+
+这一刀第一次让子控制器**自己写盘**：配置、密钥、记录、用量是本功能自己的数据。
+前几刀的"不写盘"针对的是别人的数据（会话、题库、历史），那些仍归组合根 ——
+同一条规则在不同功能上边界不同，照着上一次抄反而会绕开真正的理由。
+
+它仍然不导航、不弹提示：`openAi` / `closeAi` 留在组合根，要说的话通过
+`onNotice(text, isError)` 交回去（`text = null` 表示"没话说，顺手收掉上一条"）。
+提示做成回调而不是状态，是为了避免"已经换页了、横幅才冒出来"。
+
+当前题目用读取器传入而不是快照。这里的错位代价比前几刀高：缓存键按
+题库 + 题目 + 语言 + 修订 + 内容指纹 + 模型算，拿错题就是让用户为上一道题再付一次钱。
+新增用例 `explanationDoesNotFollowYouToTheNextQuestion` 把这条钉住。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
@@ -243,14 +260,14 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | MSI 只在本机试装流程 | 没有在干净虚拟机里完整走"安装 → 运行 → 升级 → 卸载"，升级兼容性只有 `upgradeUuid` 这一层保证 |
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
-| 组合根仍偏大 | 已从 3371 行降到 2972 行（工具箱、历史、练习设置三刀），还有 8 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 615 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
+| 组合根仍偏大 | 已从 3371 行降到 2829 行（工具箱、历史、练习设置、AI 讲解四刀），还有 7 个关注点按 [PLAN-APPCONTROLLER.md](./PLAN-APPCONTROLLER.md) 逐刀拆；它仍是唯一接触 infrastructure 的界面文件 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 616 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 
 ## 下一步建议
 
 1. **首次跑通 CI**：push 一次看 `toolchain` 与 `jvm-tests` 是否在 Ubuntu 上绿；重点盯 compileSdk 37；
-2. **继续拆 `AppController`**：第 1–3 刀已完成（工具箱、历史与日历、练习设置），下一步是 AI 讲解与离线手工编辑，每刀单独提交；
+2. **继续拆 `AppController`**：第 1–4 刀已完成（工具箱、历史与日历、练习设置、AI 讲解），下一步是离线手工编辑与历史复核，每刀单独提交；
 3. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 错题；
 4. **SQLite 存储层**：解决"整库常驻内存 / 改一道题重写整个文件"两个已登记的限制。

@@ -68,7 +68,7 @@ fun BatchScreen(controller: AppController) {
     ) {
         BannerHost(controller.banner, controller::dismissBanner)
 
-        if (!controller.aiAvailable) {
+        if (!controller.ai.available) {
             Panel(accent = Palette.Neutral) {
                 SectionTitle("本平台不支持", null)
                 Spacer(Modifier.height(8.dp))
@@ -94,7 +94,7 @@ fun BatchScreen(controller: AppController) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NewJobPanel(controller: AppController) {
-    val configured = controller.aiConfig.configured && controller.aiConfig.uploadConsent
+    val configured = controller.ai.config.configured && controller.ai.config.uploadConsent
     val banks = controller.banks
     var bankId by remember(banks) { mutableStateOf(banks.firstOrNull()?.bankId.orEmpty()) }
     var locale by remember(bankId) {
@@ -118,9 +118,9 @@ private fun NewJobPanel(controller: AppController) {
             SectionTitle("排新队列", "选范围 → 看数量 → 再开始")
             Spacer(Modifier.weight(1f))
             when {
-                !configured && controller.aiConfig.configured ->
+                !configured && controller.ai.config.configured ->
                     Pill("未同意上传", Palette.Pending, Palette.PendingSoft)
-                !controller.aiConfig.configured -> Pill("未配置", Palette.Pending, Palette.PendingSoft)
+                !controller.ai.config.configured -> Pill("未配置", Palette.Pending, Palette.PendingSoft)
                 else -> Pill("可排", Palette.Correct, Palette.CorrectSoft)
             }
         }

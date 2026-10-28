@@ -358,11 +358,11 @@ private fun ToolLink(controller: AppController) {
  */
 @Composable
 private fun AiLink(controller: AppController) {
-    if (!controller.aiAvailable) return
-    val record = controller.aiCurrentExplanation
-    val configured = controller.aiConfig.configured
+    if (!controller.ai.available) return
+    val record = controller.ai.currentExplanation
+    val configured = controller.ai.config.configured
     val tint = when {
-        controller.aiBusy -> Palette.Pending
+        controller.ai.busy -> Palette.Pending
         record?.state == AiRecordState.APPROVED -> Palette.Correct
         record?.hasText == true -> Palette.Accent
         configured -> Palette.Muted
@@ -376,8 +376,8 @@ private fun AiLink(controller: AppController) {
             .clickable(interactionSource = source, indication = null) {
                 when {
                     !configured -> controller.openAi()
-                    record?.hasText == true -> controller.toggleAiPanel()
-                    else -> controller.generateAiExplanation()
+                    record?.hasText == true -> controller.ai.togglePanel()
+                    else -> controller.ai.generate()
                 }
             }
             .padding(horizontal = 6.dp, vertical = 4.dp),
@@ -387,7 +387,7 @@ private fun AiLink(controller: AppController) {
         Spacer(Modifier.width(4.dp))
         Text(
             when {
-                controller.aiBusy -> "生成中"
+                controller.ai.busy -> "生成中"
                 record?.hasText == true -> "讲解"
                 else -> "AI 讲解"
             },
@@ -405,8 +405,8 @@ private fun AiLink(controller: AppController) {
  */
 @Composable
 private fun AiExplanationPanel(controller: AppController) {
-    if (!controller.aiPanelOpen) return
-    val record = controller.aiCurrentExplanation
+    if (!controller.ai.panelOpen) return
+    val record = controller.ai.currentExplanation
     Panel(background = Palette.PanelMuted, borderColor = Palette.AccentLine, padding = 16.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("✦", style = MaterialTheme.typography.labelLarge, color = Palette.Accent)
@@ -417,13 +417,13 @@ private fun AiExplanationPanel(controller: AppController) {
                 Pill(record.state.label, aiTint(record.state), aiSoft(record.state))
             }
             Spacer(Modifier.weight(1f))
-            GhostButton("收起", onClick = controller::toggleAiPanel)
+            GhostButton("收起", onClick = controller.ai::togglePanel)
         }
         Spacer(Modifier.height(10.dp))
 
         when {
-            controller.aiBusy -> Text(
-                "正在请求 ${controller.aiConfig.model.ifBlank { "你配置的服务" }}… 这一次会计入今天的用量。",
+            controller.ai.busy -> Text(
+                "正在请求 ${controller.ai.config.model.ifBlank { "你配置的服务" }}… 这一次会计入今天的用量。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Palette.Muted,
             )
@@ -435,7 +435,7 @@ private fun AiExplanationPanel(controller: AppController) {
                     color = Palette.Muted,
                 )
                 Spacer(Modifier.height(10.dp))
-                PrimaryButton("生成讲解", onClick = { controller.generateAiExplanation() })
+                PrimaryButton("生成讲解", onClick = { controller.ai.generate() })
             }
 
             else -> Column {
@@ -475,16 +475,16 @@ private fun AiExplanationPanel(controller: AppController) {
                     if (record.hasText) {
                         SecondaryButton(
                             text = if (record.state == AiRecordState.APPROVED) "已标记有用" else "有用",
-                            onClick = { controller.reviewAiCurrent(AiRecordState.APPROVED) },
+                            onClick = { controller.ai.reviewCurrent(AiRecordState.APPROVED) },
                             enabled = record.state != AiRecordState.APPROVED,
                         )
                         GhostButton(
                             text = if (record.state == AiRecordState.REJECTED) "已弃用" else "没用",
-                            onClick = { controller.reviewAiCurrent(AiRecordState.REJECTED) },
+                            onClick = { controller.ai.reviewCurrent(AiRecordState.REJECTED) },
                         )
-                        GhostButton("重新生成", onClick = { controller.generateAiExplanation(force = true) })
+                        GhostButton("重新生成", onClick = { controller.ai.generate(force = true) })
                     } else {
-                        PrimaryButton("重新生成", onClick = { controller.generateAiExplanation(force = true) })
+                        PrimaryButton("重新生成", onClick = { controller.ai.generate(force = true) })
                     }
                 }
             }

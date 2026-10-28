@@ -740,7 +740,7 @@ class ScreenshotTest {
         controller.openAi()
         shot("32-ai-unconfigured", height = 1320) { AppContent(controller) }
 
-        controller.saveAiConfig(
+        controller.ai.saveConfig(
             AiConfig(
                 baseUrl = "https://api.deepseek.com/v1",
                 model = "deepseek-chat",
@@ -751,9 +751,9 @@ class ScreenshotTest {
         controller.startPractice(bank, questionCount = 1)
         controller.session?.current?.question?.correctOptionIds?.forEach { controller.toggleOption(it) }
         controller.submit()
-        controller.generateAiExplanation()
+        controller.ai.generate()
         shot("33-ai-explanation", height = 1320) { AppContent(controller) }
-        println("AI 记录数=${controller.aiRecords.size} 状态=${controller.aiCurrentExplanation?.state}")
+        println("AI 记录数=${controller.ai.records.size} 状态=${controller.ai.currentExplanation?.state}")
     }
 
     private class ScreenshotAiClient : AiHttpClient {
@@ -808,7 +808,7 @@ class ScreenshotTest {
         )
         runBlocking { deps.bankRepository.save(bank) }
         controller.refresh()
-        controller.saveAiConfig(
+        controller.ai.saveConfig(
             AiConfig(
                 baseUrl = "https://api.deepseek.com/v1",
                 model = "deepseek-chat",

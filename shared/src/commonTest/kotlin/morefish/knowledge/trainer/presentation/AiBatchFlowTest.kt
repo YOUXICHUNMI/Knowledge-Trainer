@@ -109,7 +109,7 @@ class AiBatchFlowTest {
     fun queueingDoesNotSpendAnything() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
 
         c.openBatch()
@@ -128,7 +128,7 @@ class AiBatchFlowTest {
     fun startingRunsToCompletionAndFillsTheCache() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
         c.createBatch("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
@@ -140,7 +140,7 @@ class AiBatchFlowTest {
         assertEquals(AiBatchState.COMPLETED, job.state)
         assertEquals(3, job.doneCount)
         assertEquals(3, http.calls)
-        assertEquals(3, c.aiRecords.size, "生成出来的讲解要进缓存，不然下次还要再花钱")
+        assertEquals(3, c.ai.records.size, "生成出来的讲解要进缓存，不然下次还要再花钱")
         assertNull(c.aiBatchRunningId)
         assertTrue(assertNotNull(c.banner).text.contains("批量完成"))
     }
@@ -149,7 +149,7 @@ class AiBatchFlowTest {
     fun alreadyGeneratedQuestionsAreExcludedBeforeQueueing() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
 
         // 先跑一轮把三道都生成出来
@@ -172,7 +172,7 @@ class AiBatchFlowTest {
     fun pausedJobCanResumeWithoutPayingTwice() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
         c.createBatch("bank-flow", "zh-Hans", 2)
         testScheduler.advanceUntilIdle()
@@ -192,14 +192,14 @@ class AiBatchFlowTest {
         testScheduler.advanceUntilIdle()
 
         assertEquals(3, http.calls, "续跑只能补没做过的那一道")
-        assertEquals(3, c.aiRecords.size)
+        assertEquals(3, c.ai.records.size)
     }
 
     @Test
     fun cancellingLeavesTheQueueUntouched() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
         c.createBatch("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
@@ -217,7 +217,7 @@ class AiBatchFlowTest {
     fun budgetShortagePausesInsteadOfBurningThroughFailures() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(budget = AiBudget(maxCallsPerDay = 2)), "sk-test")
+        c.ai.saveConfig(configured(budget = AiBudget(maxCallsPerDay = 2)), "sk-test")
         testScheduler.advanceUntilIdle()
         c.createBatch("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
@@ -238,7 +238,7 @@ class AiBatchFlowTest {
         val storage = InMemoryTextStorage()
         val http = CountingHttp()
         val c = controller(storage, http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
         c.createBatch("bank-flow", "zh-Hans", 2)
         testScheduler.advanceUntilIdle()
@@ -264,7 +264,7 @@ class AiBatchFlowTest {
     fun deletingAJobKeepsTheGeneratedExplanations() = runTest {
         val http = CountingHttp()
         val c = controller(InMemoryTextStorage(), http, testScheduler)
-        c.saveAiConfig(configured(), "sk-test")
+        c.ai.saveConfig(configured(), "sk-test")
         testScheduler.advanceUntilIdle()
         c.createBatch("bank-flow", "zh-Hans", 0)
         testScheduler.advanceUntilIdle()
@@ -276,6 +276,6 @@ class AiBatchFlowTest {
         testScheduler.advanceUntilIdle()
 
         assertEquals(emptyList(), c.aiJobs)
-        assertEquals(3, c.aiRecords.size, "删任务是删待办，不是删花过钱买来的内容")
+        assertEquals(3, c.ai.records.size, "删任务是删待办，不是删花过钱买来的内容")
     }
 }

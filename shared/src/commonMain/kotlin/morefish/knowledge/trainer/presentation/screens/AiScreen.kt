@@ -111,27 +111,27 @@ private fun BatchEntry(controller: AppController) {
 
 @Composable
 private fun StatusPanel(controller: AppController) {
-    val usage = controller.aiUsageToday
-    val budget = controller.aiConfig.budget
-    Panel(accent = if (controller.aiAvailable) Palette.Accent else Palette.Neutral) {
+    val usage = controller.ai.usageToday
+    val budget = controller.ai.config.budget
+    Panel(accent = if (controller.ai.available) Palette.Accent else Palette.Neutral) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SectionTitle("当前状态", null)
             Spacer(Modifier.weight(1f))
             when {
-                !controller.aiAvailable -> Pill("本平台不支持", Palette.Neutral, Palette.NeutralSoft)
-                !controller.aiConfig.configured -> Pill("未配置", Palette.Pending, Palette.PendingSoft)
-                !controller.aiConfig.uploadConsent -> Pill("未同意上传", Palette.Pending, Palette.PendingSoft)
+                !controller.ai.available -> Pill("本平台不支持", Palette.Neutral, Palette.NeutralSoft)
+                !controller.ai.config.configured -> Pill("未配置", Palette.Pending, Palette.PendingSoft)
+                !controller.ai.config.uploadConsent -> Pill("未同意上传", Palette.Pending, Palette.PendingSoft)
                 else -> Pill("可用", Palette.Correct, Palette.CorrectSoft)
             }
         }
         Spacer(Modifier.height(10.dp))
         Text(
             when {
-                !controller.aiAvailable ->
+                !controller.ai.available ->
                     "联网 AI 目前只在桌面端接入。Android / iOS / Web 端不会偷偷发请求，也不会显示点了没反应的按钮。"
-                !controller.aiConfig.configured ->
+                !controller.ai.config.configured ->
                     "还没有填接口地址与模型名。下面的输入框填完点保存，练习页才会出现「AI 讲解」入口。"
-                !controller.aiConfig.uploadConsent ->
+                !controller.ai.config.uploadConsent ->
                     "配置填好了，但还没有同意把题目内容发送给该服务 —— 没有这一步，一次请求都不会发。"
                 else ->
                     "讲解由你配置的服务生成。默认只发当前这一道题（题干、选项、正确答案、你的答案），" +
@@ -185,7 +185,7 @@ private fun StatusPanel(controller: AppController) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ConfigPanel(controller: AppController) {
-    val saved = controller.aiConfig
+    val saved = controller.ai.config
     // 表单用本地草稿：每敲一个字就落盘既没必要，也会让"取消"变得不可能
     var baseUrl by remember(saved) { mutableStateOf(saved.baseUrl) }
     var model by remember(saved) { mutableStateOf(saved.model) }
@@ -261,7 +261,7 @@ private fun ConfigPanel(controller: AppController) {
         OutlinedTextField(
             value = apiKey,
             onValueChange = { apiKey = it },
-            label = { Text(if (controller.aiHasKey) "API Key（已保存，留空则不修改）" else "API Key") },
+            label = { Text(if (controller.ai.hasKey) "API Key（已保存，留空则不修改）" else "API Key") },
             placeholder = { Text("本地模型可以留空") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
@@ -334,7 +334,7 @@ private fun ConfigPanel(controller: AppController) {
             PrimaryButton(
                 text = "保存配置",
                 onClick = {
-                    controller.saveAiConfig(
+                    controller.ai.saveConfig(
                         AiConfig(
                             baseUrl = baseUrl.trim(),
                             model = model.trim(),
@@ -354,14 +354,14 @@ private fun ConfigPanel(controller: AppController) {
                     apiKey = ""
                 },
             )
-            if (controller.aiHasKey) {
-                GhostButton("清除已存密钥", onClick = controller::clearAiCredential)
+            if (controller.ai.hasKey) {
+                GhostButton("清除已存密钥", onClick = controller.ai::clearCredential)
             }
             if (saved.configured) {
                 SecondaryButton(
                     text = "关闭 AI",
                     onClick = {
-                        controller.saveAiConfig(AiConfig(), apiKeyDraft = null)
+                        controller.ai.saveConfig(AiConfig(), apiKeyDraft = null)
                         baseUrl = ""
                         model = ""
                     },
@@ -400,7 +400,7 @@ private fun NumberField(
 
 @Composable
 private fun RecordsPanel(controller: AppController) {
-    val records = controller.aiRecords
+    val records = controller.ai.records
     SectionTitle("讲解记录", if (records.isEmpty()) null else "${records.size} 条")
     Spacer(Modifier.height(10.dp))
     if (records.isEmpty()) {
