@@ -1,0 +1,2 @@
+{"questionId":"k001","locale":"zh-Hans","contentRevision":1,"promptMarkdown":"用关键词概括：什么是实践？","answerText":"实践是人类能动地改造世界的客观物质活动。","explanationMarkdown":"默知识点按关键词判定，答案原文仅供对照。"}
+{"questionId":"r001","locale":"zh-Hans","contentRevision":1,"promptMarkdown":"把片段排成一句通顺的话","options":[{"optionId":"f1","contentMarkdown":"实践"},{"optionId":"f2","contentMarkdown":"能动地"},{"optionId":"f3","contentMarkdown":"改造世界"},{"optionId":"f4","contentMarkdown":"被动地"}],"explanationMarkdown":"标准次序：实践 → 能动地 → 改造世界。"}

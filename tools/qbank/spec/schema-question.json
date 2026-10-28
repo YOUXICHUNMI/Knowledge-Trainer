@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://knowledge-trainer.local/schema/kt-qbf/1.0/question.json",
+  "title": "KT-QBF 1.0 structural question record (questions/part-*.ndjson)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["questionId", "type"],
+  "properties": {
+    "questionId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+    },
+    "type": {
+      "enum": ["single_choice", "multiple_choice", "true_false", "short_answer", "ordering"]
+    },
+    "optionIds": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 26,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$" }
+    },
+    "correctOptionIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 26,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$" }
+    },
+    "shuffleAllowed": { "type": "boolean" },
+    "grading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy"],
+      "properties": {
+        "strategy": { "enum": ["exact-set", "strict-text", "keywords", "ordering"] },
+        "required": {
+          "type": "array", "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "forbidden": {
+          "type": "array", "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "alternatives": {
+          "type": "array", "maxItems": 8,
+          "items": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$" }
+          }
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 32 }
+    },
+    "sourceId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$" },
+    "sourceLocator": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "origin": { "enum": ["authored", "adapted", "imported", "ai-assisted"] },
+    "contentRevision": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "enum": ["single_choice", "multiple_choice", "true_false", "ordering"] } }, "required": ["type"] },
+      "then": { "required": ["optionIds", "correctOptionIds"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "short_answer" } }, "required": ["type"] },
+      "then": { "not": { "required": ["optionIds"] } }
+    }
+  ]
+}

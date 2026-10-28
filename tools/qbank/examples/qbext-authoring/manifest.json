@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0.0",
+  "format": "knowledge-trainer-bank-extension",
+  "packageId": "physiology-crossref",
+  "name": "生理学 · 跨库关系补丁",
+  "version": "1.0.0",
+  "author": {
+    "displayName": "Knowledge Trainer 示例"
+  },
+  "license": "CC-BY-SA-4.0",
+  "description": "演示扩展包能做什么：给某道题补前置、跨库依据与易混对比，再附两段讲解。源题库只读，装上只增加关系与注释。",
+  "binds": {
+    "bankId": "3f2b1d7a-9c4e-4a61-8b52-0d7e6c91a4f5",
+    "bankTitle": "生理学（示例题库）"
+  },
+  "files": []
+}

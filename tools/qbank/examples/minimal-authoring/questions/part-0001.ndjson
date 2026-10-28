@@ -1,0 +1,3 @@
+{"questionId":"q001","type":"single_choice","optionIds":["o1","o2","o3"],"correctOptionIds":["o2"],"shuffleAllowed":true,"grading":{"strategy":"exact-set"},"tags":["tcp","network"],"origin":"authored"}
+{"questionId":"q002","type":"multiple_choice","optionIds":["o1","o2","o3","o4"],"correctOptionIds":["o1","o2","o3"],"shuffleAllowed":true,"grading":{"strategy":"exact-set"},"tags":["马克思主义哲学"],"sourceId":"marx-textbook","sourceLocator":"第一章 第二节 课后练习 3","origin":"adapted"}
+{"questionId":"q003","type":"short_answer","grading":{"strategy":"strict-text"},"tags":["马克思主义哲学"]}

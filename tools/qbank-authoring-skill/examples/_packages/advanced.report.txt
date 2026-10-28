@@ -1,0 +1,10 @@
+OK  examples/_packages/advanced.qbank
+    schema=1.0.0  bankId=6f1d3c2a-9b84-4e57-a1c0-2d5f7e9b3a10
+    title=KT-QBF 综合示例：网络与数学
+    题目 6：单选 2 / 多选 2 / 判断 1 / 简答 1；媒体 1
+    语言 en: 2/6
+    语言 zh-Hans: 6/6
+    增强：{'reconstruction': 1, 'distractor': 1}
+    digest=34b6708b09de59c3a1d3c5a57dce600a7a9204efa21391edd5e98f4244ac6424
+    内容摘要=4756136d3201944978bee0004af6a9ce14752f6e3b11acbb526fee186d8c2c82
+  WARN  [LOCALE_PARTIAL] en 只覆盖 2/6 题，缺 4 题

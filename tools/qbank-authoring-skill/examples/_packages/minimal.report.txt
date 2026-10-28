@@ -1,0 +1,7 @@
+OK  examples/_packages/minimal.qbank
+    schema=1.0.0  bankId=550e8400-e29b-41d4-a716-446655440000
+    title=KT-QBF 最小示例题库
+    题目 3：单选 1 / 多选 1 / 判断 0 / 简答 1；媒体 0
+    语言 zh-Hans: 3/3
+    digest=7c86548749703cfbe328d9f4f9cfbb98339da0fd5d04547972960fcb8e64290a
+    内容摘要=07cefce49c5ea517e13638e6bc2816a020297adee9a627877a184de2d9b97759

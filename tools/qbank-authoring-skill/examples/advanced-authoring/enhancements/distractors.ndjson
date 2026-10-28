@@ -1,0 +1,1 @@
+{"questionId":"net-tcp-vs-udp","ruleId":"dis-001","distractor":"TCP 与 UDP 都是面向连接的协议","whyWrong":"UDP 无连接，这是最常见的混淆点。","reviewStatus":"unreviewed","generatedBy":"ai-draft","note":"AI 起草，未经人工审核，不得据此外发。"}

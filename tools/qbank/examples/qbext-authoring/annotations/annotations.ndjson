@@ -1,0 +1,3 @@
+# 讲解注释：绑定到某道题，或省略 questionId 表示针对整库。
+{"annotationId": "a-outcome-trap", "questionId": "q-cardiac-output", "title": "为什么心率翻倍不等于心输出量翻倍", "bodyMarkdown": "心率上升时舒张期被压缩，**充盈时间**变短，每搏量会跟着下降。\n\n所以 $CO = HR \\times SV$ 里的两项并不独立：$HR$ 上去，$SV$ 往往下来。题目里「心率加倍、心输出量也加倍」的选项，错就错在把它俩当成了独立变量。"}
+{"annotationId": "a-bank-howto", "title": "这份补丁怎么用", "bodyMarkdown": "四道题之间的关系都指向循环系统题库。**那个题库没装**的时候，这里的关系照样保存，只是在图谱里显示为「题库未安装」。\n\n顺序无所谓：先装扩展包、后装题库，或者反过来，结果一样。"}

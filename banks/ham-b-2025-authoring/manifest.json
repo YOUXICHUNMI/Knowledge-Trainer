@@ -1,0 +1,24 @@
+{
+  "format": "knowledge-trainer-question-bank",
+  "schemaVersion": "1.0.0",
+  "bankId": "b0ea74b9-e8e6-4bc5-9105-1e46ae78b6a6",
+  "contentRevision": 1,
+  "title": "业余无线电B类操作证书考试题库（2025版）",
+  "description": "CRAC《业余无线电操作证书考试》B类题库 2025 年版（整理者 BA1GG），共 1143 题：单选/多选均按官方答案转换，附官方题库 24 张附图。题号沿用官方编号（MCn 前缀中的 n 即正确选项个数）。explanationMarkdown 为 AI 生成的参考解释，仅供学习参考，判分以标准答案为准。",
+  "sourceLocale": "zh-Hans",
+  "supportedLocales": [
+    "zh-Hans"
+  ],
+  "author": {
+    "displayName": "BA1GG（题库整理）/ Knowledge-Trainer 转制"
+  },
+  "tags": [
+    "业余无线电",
+    "B类",
+    "2025版",
+    "CRAC",
+    "附图"
+  ],
+  "createdAt": "2026-10-19T09:27:19Z",
+  "files": []
+}

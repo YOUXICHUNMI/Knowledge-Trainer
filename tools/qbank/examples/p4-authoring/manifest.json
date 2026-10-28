@@ -1,0 +1,18 @@
+{
+  "format": "knowledge-trainer-question-bank",
+  "schemaVersion": "1.0.0",
+  "bankId": "550e8400-e29b-41d4-a716-446655440004",
+  "contentRevision": 1,
+  "title": "KT-QBF P4 扩展示例题库",
+  "description": "1.1 扩展（草案）：默知识点关键词简答 + 语义重组。files 留空，由 build_qbank.py 自动计算。",
+  "sourceLocale": "zh-Hans",
+  "supportedLocales": ["zh-Hans"],
+  "author": {
+    "displayName": "Knowledge Trainer",
+    "contacts": [{"type": "email", "label": "错误反馈", "address": "feedback@example.org"}]
+  },
+  "license": "CC-BY-4.0",
+  "tags": ["demo", "p4"],
+  "createdAt": "2026-10-19T00:00:00Z",
+  "files": []
+}

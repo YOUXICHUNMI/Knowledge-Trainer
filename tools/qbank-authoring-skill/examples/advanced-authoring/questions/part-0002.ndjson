@@ -1,0 +1,2 @@
+{"questionId":"math-quadratic-root","type":"single_choice","optionIds":["a","b","c","d"],"correctOptionIds":["b"],"shuffleAllowed":true,"grading":{"strategy":"exact-set"},"tags":["二次方程","数学"]}
+{"questionId":"net-osi-layers","type":"multiple_choice","optionIds":["l1","l2","l3","l4","l5"],"correctOptionIds":["l1","l2","l3"],"shuffleAllowed":true,"grading":{"strategy":"exact-set"},"tags":["OSI","网络"]}

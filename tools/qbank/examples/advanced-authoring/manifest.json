@@ -1,0 +1,20 @@
+{
+  "format": "knowledge-trainer-question-bank",
+  "schemaVersion": "1.0.0",
+  "bankId": "6f1d3c2a-9b84-4e57-a1c0-2d5f7e9b3a10",
+  "contentRevision": 3,
+  "title": "KT-QBF 综合示例：网络与数学",
+  "description": "覆盖多语言（zh-Hans 全量 + en 部分）、Markdown/LaTeX、图片资源、可选增强资料、多分片结构。用于验证规范的综合能力。",
+  "sourceLocale": "zh-Hans",
+  "supportedLocales": ["zh-Hans", "en"],
+  "author": {
+    "displayName": "KT-QBF 示例作者",
+    "contacts": [
+      { "type": "email", "label": "错误反馈", "address": "author@example.org" }
+    ]
+  },
+  "license": "CC-BY-SA-4.0",
+  "tags": ["demo", "network", "math", "i18n"],
+  "createdAt": "2026-10-19T00:00:00Z",
+  "files": []
+}

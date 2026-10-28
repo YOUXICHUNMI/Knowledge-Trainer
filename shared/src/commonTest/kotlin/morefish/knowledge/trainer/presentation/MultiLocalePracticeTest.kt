@@ -1,0 +1,231 @@
+package morefish.knowledge.trainer.presentation
+
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
+import morefish.knowledge.trainer.application.port.InMemoryTextStorage
+import morefish.knowledge.trainer.application.port.WallClock
+import morefish.knowledge.trainer.domain.i18n.LocaleCoverage
+import morefish.knowledge.trainer.domain.i18n.LocaleFallback
+import morefish.knowledge.trainer.domain.model.Question
+import morefish.knowledge.trainer.domain.model.QuestionBank
+import morefish.knowledge.trainer.domain.model.QuestionOption
+import morefish.knowledge.trainer.domain.model.QuestionText
+import morefish.knowledge.trainer.domain.model.QuestionType
+import morefish.knowledge.trainer.domain.practice.PracticeScope
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * 多语言练习的控制器级行为：默认语言、按语言抽题、按语言记历史、缺译文时的两种选择。
+ *
+ * 这里刻意不碰界面，只验证"控制器把语言当成了什么"——
+ * 因为 UI 只是把这些状态画出来，判断错了 UI 再好看也没用。
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class MultiLocalePracticeTest {
+
+    private var now = 1_800_000_000_000L
+    private val clock = WallClock { now }
+
+    private fun bank(): QuestionBank {
+        fun choice(id: String, withEnglish: Boolean) = Question(
+            questionId = id,
+            type = QuestionType.SINGLE_CHOICE,
+            promptMarkdown = "题干 $id",
+            options = listOf(QuestionOption("o1", "甲"), QuestionOption("o2", "乙")),
+            correctOptionIds = setOf("o1"),
+            translations = if (!withEnglish) {
+                emptyMap()
+            } else {
+                mapOf(
+                    "en" to QuestionText(
+                        locale = "en",
+                        promptMarkdown = "Prompt $id",
+                        optionTexts = mapOf("o1" to "first", "o2" to "second"),
+                    ),
+                )
+            },
+        )
+        return QuestionBank(
+            bankId = "bank-bilingual",
+            title = "双语题库",
+            sourceLocale = "zh-Hans",
+            questions = listOf(choice("q1", true), choice("q2", false), choice("q3", true)),
+            importedAtMillis = 0,
+            sourceLabel = "test",
+            localeCoverage = listOf(LocaleCoverage("zh-Hans", 3, 3), LocaleCoverage("en", 2, 3)),
+        )
+    }
+
+    private fun controller(storage: InMemoryTextStorage, scheduler: TestCoroutineScheduler): AppController =
+        AppController(
+            deps = AppDependencies(storage, clock),
+            scope = CoroutineScope(UnconfinedTestDispatcher(scheduler)),
+        )
+
+    @Test
+    fun defaultsToInterfaceLanguageAndSaysHowManyAreUntranslated() = runTest {
+        val storage = InMemoryTextStorage()
+        AppDependencies(storage, clock).bankRepository.save(bank())
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.openSetup("bank-bilingual")
+        testScheduler.advanceUntilIdle()
+
+        // 界面是中文，题库源语言也是中文：默认就该练中文，而不是"有英文就练英文"
+        assertEquals("zh-Hans", c.setupLocale)
+        assertEquals(3, c.setupCandidateCount)
+        assertEquals(0, c.setupUntranslated)
+        assertEquals(listOf("zh-Hans", "en"), c.setupLocales)
+    }
+
+    @Test
+    fun switchingLanguageShrinksCandidatesInsteadOfSubstituting() = runTest {
+        val storage = InMemoryTextStorage()
+        AppDependencies(storage, clock).bankRepository.save(bank())
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.openSetup("bank-bilingual")
+        c.selectSetupLocale("en")
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(2, c.setupCandidateCount, "英文只翻了 2 题，就该只有 2 题可抽")
+        assertEquals(1, c.setupUntranslated, "q2 没有英文译文")
+        assertEquals(2, c.setupCoverage?.covered)
+        assertEquals(3, c.setupCoverage?.total)
+
+        // 打开「缺译文时看原文」才把没译文的题放回来
+        c.toggleSetupFallback()
+        assertEquals(LocaleFallback.ORIGINAL, c.setupFallback)
+        assertEquals(3, c.setupCandidateCount)
+    }
+
+    @Test
+    fun sessionAndAttemptsRecordTheLanguageTheyWereAnsweredIn() = runTest {
+        val storage = InMemoryTextStorage()
+        AppDependencies(storage, clock).bankRepository.save(bank())
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.openSetup("bank-bilingual")
+        c.selectSetupLocale("en")
+        c.selectSetupCount(null)
+        c.startPlannedPractice()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("en", c.session?.locale)
+        assertEquals(2, c.session?.items?.size)
+        // 会话里的题面已经是英文，判题会用英文选项，不是中文
+        assertTrue(c.session!!.items.all { it.question.promptMarkdown.startsWith("Prompt") })
+
+        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
+        c.submit()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("en", c.history.last().locale)
+        assertEquals(listOf("en"), c.historyLocales)
+    }
+
+    @Test
+    fun historiesAreIndependentPerLanguage() = runTest {
+        val storage = InMemoryTextStorage()
+        AppDependencies(storage, clock).bankRepository.save(bank())
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.openSetup("bank-bilingual")
+        c.selectSetupLocale("en")
+        c.startPlannedPractice()
+        testScheduler.advanceUntilIdle()
+        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
+        c.submit()
+        testScheduler.advanceUntilIdle()
+
+        // 英文里答过一道题，不该让中文的「未练习」少一题
+        c.openSetup("bank-bilingual")
+        c.selectSetupScope(PracticeScope.UNPRACTICED)
+        testScheduler.advanceUntilIdle()
+        assertEquals(3, c.scopeCount(PracticeScope.UNPRACTICED), "中文视角下这 3 题都没练过")
+
+        c.selectSetupLocale("en")
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, c.scopeCount(PracticeScope.UNPRACTICED), "英文视角下只剩 q3 没练")
+    }
+
+    @Test
+    fun historyCanBeFilteredByLanguage() = runTest {
+        val storage = InMemoryTextStorage()
+        AppDependencies(storage, clock).bankRepository.save(bank())
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+
+        // 中文练一题
+        c.startPractice(c.banks.single(), questionCount = 1)
+        testScheduler.advanceUntilIdle()
+        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
+        c.submit()
+        testScheduler.advanceUntilIdle()
+        c.finish()
+        testScheduler.advanceUntilIdle()
+
+        // 英文练一题
+        c.openSetup("bank-bilingual")
+        c.selectSetupLocale("en")
+        c.startPlannedPractice()
+        testScheduler.advanceUntilIdle()
+        c.session!!.current!!.question.correctOptionIds.forEach { c.toggleOption(it) }
+        c.submit()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(listOf("en", "zh-Hans"), c.historyLocales)
+        assertEquals(2, c.filteredHistory.size)
+
+        c.selectHistoryLocale("en")
+        assertEquals(1, c.filteredHistory.size)
+        assertEquals("en", c.filteredHistory.single().locale)
+
+        c.selectHistoryLocale("zh-Hans")
+        assertEquals(1, c.filteredHistory.size)
+
+        c.selectHistoryLocale(null)
+        assertEquals(2, c.filteredHistory.size)
+    }
+
+    @Test
+    fun fallingBackToOriginalIsVisibleOnTheQuestion() = runTest {
+        val storage = InMemoryTextStorage()
+        AppDependencies(storage, clock).bankRepository.save(bank())
+
+        val c = controller(storage, testScheduler)
+        c.refresh()
+        c.openSetup("bank-bilingual")
+        c.selectSetupLocale("en")
+        c.toggleSetupFallback()
+        c.startPlannedPractice()
+        testScheduler.advanceUntilIdle()
+
+        // 会话里每道题都带着自己的语言：有译文的是 en，缺译文退回原文的是 zh-Hans
+        val byLocale = c.session!!.items.groupBy { it.question.locale }
+        assertEquals(2, byLocale["en"]?.size, "两道有译文的题应标成 en")
+        val original = assertNotNull(byLocale["zh-Hans"]).single()
+        assertEquals("q2", original.question.questionId)
+        assertTrue(original.question.promptMarkdown.startsWith("题干"), "退回的是原文，不是凭空造的译文")
+
+        // 当前题是否显示原文，与它自己的语言一致 —— 界面靠这个标记决定要不要挂「原文」徽章
+        val current = assertNotNull(c.currentQuestion)
+        assertEquals(
+            current.locale == "zh-Hans",
+            c.currentQuestionShowsOriginal,
+            "「原文」徽章必须跟着当前题实际用的语言走",
+        )
+    }
+}

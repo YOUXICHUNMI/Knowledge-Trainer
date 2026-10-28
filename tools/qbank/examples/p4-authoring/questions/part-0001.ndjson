@@ -1,0 +1,2 @@
+{"questionId":"k001","type":"short_answer","grading":{"strategy":"keywords","required":["实践","能动","改造"],"forbidden":["被动"]},"tags":["p4"]}
+{"questionId":"r001","type":"ordering","optionIds":["f1","f2","f3","f4"],"correctOptionIds":["f1","f2","f3"],"grading":{"strategy":"ordering","alternatives":[["f2","f1","f3"]]},"tags":["p4"]}

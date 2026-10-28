@@ -1,0 +1,5 @@
+# 跨库关系：一行一条。source 省略 bankId 时默认是本包绑定的题库。
+{"relationId":"r-outcome-preload","source":{"questionId":"q-cardiac-output"},"target":{"bankId":"7c1e5a92-4b3d-4f80-9a6e-2d5b8c1f0e37","questionId":"q-frank-starling"},"relation":"prerequisite","dependency":"hard","noteMarkdown":"先弄懂 Frank–Starling 机制，再来算心输出量；这条是**判题依据**，目标缺失时本题会标注暂停。"}
+{"relationId":"r-outcome-formula","source":{"bankId":"3f2b1d7a-9c4e-4a61-8b52-0d7e6c91a4f5","questionId":"q-cardiac-output"},"target":{"bankId":"7c1e5a92-4b3d-4f80-9a6e-2d5b8c1f0e37","questionId":"q-co-formula"},"relation":"explains","dependency":"navigation","noteMarkdown":"公式本身在循环系统库里，这里只连过去，不复制。"}
+{"relationId":"r-pressure-afterload","source":{"questionId":"q-arterial-pressure"},"target":{"bankId":"7c1e5a92-4b3d-4f80-9a6e-2d5b8c1f0e37","questionId":"q-afterload"},"relation":"related","noteMarkdown":"平均动脉压与后负荷互相牵制，一起看更清楚。"}
+{"relationId":"r-pressure-vs-flow","source":{"questionId":"q-arterial-pressure"},"target":{"bankId":"7c1e5a92-4b3d-4f80-9a6e-2d5b8c1f0e37","questionId":"q-laminar-flow"},"relation":"contrasts","noteMarkdown":"**压强**与**流量**是两个量，考试里最常见的错法就是把它们当成同一件事。"}

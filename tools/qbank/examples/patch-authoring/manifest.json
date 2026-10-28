@@ -1,0 +1,54 @@
+{
+  "format": "knowledge-trainer-bank-patch",
+  "schemaVersion": "1.0.0",
+  "patchId": "starter-v2",
+  "version": "2.0.0",
+  "name": "示例题库 v2：修正多选题答案 + 新增一道判断题",
+  "bankId": "550e8400-e29b-41d4-a716-446655440000",
+  "baseRevision": 1,
+  "targetRevision": 2,
+  "notes": "作者发现第 2 题漏了「直接现实性」这个正确选项，补上并调整答案；第 1 题题干措辞微调；新增一道判断题。baseFingerprint 与每条 expect 由 `qbpatch.py build --base` 从旧包里算，不要手写。",
+  "createdAt": "2026-10-20T00:00:00Z",
+  "operations": [
+    {
+      "op": "update",
+      "questionId": "q001",
+      "set": {
+        "promptMarkdown": "TCP 三次握手主要是为了解决什么问题？",
+        "explanationMarkdown": "三次握手用于建立 TCP 连接、确认双方的收发能力；四次挥手用于断开。题目问的是「建立连接」，不是「加密」——TLS 才负责加密。"
+      }
+    },
+    {
+      "op": "update",
+      "questionId": "q002",
+      "set": {
+        "options": [
+          { "optionId": "o1", "contentMarkdown": "客观物质性" },
+          { "optionId": "o2", "contentMarkdown": "自觉能动性" },
+          { "optionId": "o3", "contentMarkdown": "社会历史性" },
+          { "optionId": "o4", "contentMarkdown": "纯粹主观性" },
+          { "optionId": "o5", "contentMarkdown": "直接现实性" }
+        ],
+        "correctOptionIds": ["o1", "o2", "o3", "o5"],
+        "explanationMarkdown": "实践的基本特征包括客观物质性、自觉能动性、社会历史性和直接现实性。「纯粹主观性」恰好是实践的反义描述 —— 实践之所以能检验真理，正因为它具有直接现实性。"
+      }
+    },
+    {
+      "op": "add",
+      "questionId": "q004",
+      "question": {
+        "questionId": "q004",
+        "type": "true_false",
+        "promptMarkdown": "「实践是检验真理的唯一标准」这一说法成立。",
+        "options": [
+          { "optionId": "t", "contentMarkdown": "正确" },
+          { "optionId": "f", "contentMarkdown": "错误" }
+        ],
+        "correctOptionIds": ["t"],
+        "explanationMarkdown": "这是马克思主义认识论的基本命题：真理的客观性只能由具有直接现实性的实践来检验。",
+        "shuffleAllowed": false,
+        "tags": ["马克思主义哲学"]
+      }
+    }
+  ]
+}

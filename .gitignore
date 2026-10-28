@@ -17,3 +17,9 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
+
+# Python 工具链的中间产物（tools/qbank 与制包 Skill）
+__pycache__/
+*.pyc
+tools/qbank/tests/_tmp/
+tools/qbank-authoring-skill/scripts/tests/_tmp/

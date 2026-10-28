@@ -1,0 +1,21 @@
+{
+  "format": "knowledge-trainer-question-bank",
+  "schemaVersion": "1.0.0",
+  "bankId": "550e8400-e29b-41d4-a716-446655440000",
+  "contentRevision": 1,
+  "title": "KT-QBF 最小示例题库",
+  "description": "规范文档 §5/§6 里那三道示例题的真实可导入包：单选、多选、简答各一。files 留空，由 build_qbank.py 自动计算。",
+  "sourceLocale": "zh-Hans",
+  "supportedLocales": ["zh-Hans"],
+  "author": {
+    "displayName": "Knowledge Trainer",
+    "contacts": [
+      { "type": "email", "label": "错误反馈", "address": "feedback@example.org" },
+      { "type": "github", "label": "Issues", "url": "https://github.com/example/knowledge-bank/issues" }
+    ]
+  },
+  "license": "CC-BY-4.0",
+  "tags": ["demo", "starter"],
+  "createdAt": "2026-10-19T00:00:00Z",
+  "files": []
+}

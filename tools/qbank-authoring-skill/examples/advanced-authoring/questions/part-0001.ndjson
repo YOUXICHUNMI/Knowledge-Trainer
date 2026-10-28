@@ -1,0 +1,4 @@
+{"questionId":"net-tcp-handshake","type":"single_choice","optionIds":["o1","o2","o3","o4"],"correctOptionIds":["o3"],"shuffleAllowed":true,"grading":{"strategy":"exact-set"},"tags":["tcp","网络"]}
+{"questionId":"net-tcp-flags","type":"multiple_choice","optionIds":["syn","ack","fin","rst"],"correctOptionIds":["syn","ack"],"shuffleAllowed":true,"grading":{"strategy":"exact-set"},"tags":["tcp","网络"]}
+{"questionId":"net-tcp-vs-udp","type":"true_false","optionIds":["yes","no"],"correctOptionIds":["no"],"shuffleAllowed":false,"grading":{"strategy":"exact-set"},"tags":["udp","网络"]}
+{"questionId":"math-derivative","type":"short_answer","grading":{"strategy":"strict-text"},"tags":["微积分","数学"]}

@@ -1,0 +1,169 @@
+# Knowledge Trainer — 开发状态（P10）
+
+> 更新时间：2026-10-28
+> 本文件只记录**真实执行过**的检查与产物；没跑过的平台、没签名的包，一律如实标注。
+
+## 一句话结论
+
+P10 第一切片完成：**分层架构从"文档约定"变成可执行断言**（7 条，0 越层）；
+**Windows 与 Android 首次产出真实可分发产物**（MSI 63.7 MB、debug APK 13.6 MB、
+release APK 9.7 MB 未签名），桌面端 exe 实测可启动；
+**制包 Skill 与工程内实现重新对齐** —— Skill 副本此前落后两天，会拒收应用已经接受的
+`sources` / `contentDigest` 包，现在两边规范与校验器逐字节一致，四份真实题库（A/B/C/总）
+在新校验器下仍全部通过。
+
+## P10-1 架构验收：把"依赖只能指向内层"变成测试
+
+新增 `shared/src/jvmTest/.../architecture/ArchitectureTest.kt`（7 个用例），
+直接扫描 `shared/src/commonMain` 的**真实源码**按目录分层，而不是靠人自觉：
+
+| 断言 | 规则 | 当前结果 |
+|---|---|---|
+| domain 不依赖任何外层 | `domain/**` 不 import application / infrastructure / presentation | 0 处（零容忍，无例外） |
+| application 不依赖 presentation | 用例层不得认识界面 | 0 处 |
+| presentation 只在组合根接触 infrastructure | 界面只认 domain / application | 仅 `AppController.kt`（组合根） |
+| application → infrastructure 只能出现在登记表 | 新增必须先进端口 | 4 处已登记（见下） |
+| 登记项必须仍然真实存在 | 修好了要删登记，清单不许说谎 | 5/5 仍有效 |
+| commonMain 不出现 JVM/Android 专属 API | `java.*` / `javax.*` / `android.*` / `sun.*` | 0 处（122 个 Kotlin 文件） |
+| 扫描确实覆盖源码 | 防止路径算错导致"全绿但没检查" | 122 个文件，断言 ≥100 |
+
+### 顺带修掉的越层
+
+`presentation/screens/ImportScreen.kt` 原来直接 import `infrastructure.importing.ChoiceMapping`
+和 `ImportPreview`。这些是**用例的输入/输出契约**，不属于任何具体导入实现，已上移到
+`application/port/`：
+
+| 类型 | 新位置 | 理由 |
+|---|---|---|
+| `ChoiceMapping` | `application/port/ImportOptions.kt` | 界面要传、导入器要读，两边都不该依赖对方的包 |
+| `ImportPreview` / `RejectedQuestion` / `ImportParseResult` | `application/port/ImportPreview.kt` | 导入器的输出、界面的输入，是端口契约 |
+
+结果：`presentation` 只剩 `AppController.kt` 一个文件接触 infrastructure，而它正是
+`AppDependencies` 挑选具体实现的地方 —— 组合根有且只有一个。
+
+### 没有做的事（登记而不是藏起来）
+
+用例层仍有 4 处直接依赖基础设施，全部写在测试的登记表里，并附原因：
+
+| 文件 | 直接依赖 | 为什么还没端口化 |
+|---|---|---|
+| `ImportBankUseCase.kt` | `JsonQuestionImporter` / `QbankImporter` / `PureDeflateCodec` | `.qbank` 解析结果（含媒体字节、出处、语言覆盖）还没有 application 侧的返回类型 |
+| `ImportExtensionUseCase.kt` | `QbextImporter` / `PackageProbe` | 扩展包只有一种实现，先抽象容易抽错 |
+| `ApplyPatchUseCase.kt` | `QbpatchImporter` / `PureDeflateCodec` | 同上 |
+| `BackupUseCases.kt` | `BackupArchive` / `BackupBundle` | 备份容器与加密耦合在一起，拆端口要连加密一起改 |
+
+这不是"以后再说"，而是**新增越层会立刻让测试失败**：可以接受旧债，不能偷偷加新债。
+
+## P10-2 发布准备：真实产物
+
+### 图标
+
+`tools/release/make_icons.py` 用代码画图标（无随机、无时间戳，重跑字节一致）：
+
+- 设计：靛蓝渐变底 + 白色答题卡（三条题目占位线）+ 右下角绿色判对徽标，
+  配色取自 `presentation/theme/Palette.kt` 的 `HeroStart/HeroEnd` 与 `Correct`；
+- Android：5 个密度 × 普通/圆形（10 张 PNG）+ 自适应图标前景（`drawable-xxxhdpi`，432px = 108dp）
+  与纯色背景；
+- 桌面：`desktopApp/icons/app.ico`（16/24/32/48/64/128/256 七个尺寸）与 512px PNG。
+
+换掉了模板自带的 Android 机器人图标 —— 一个准备发出去的安装包不该顶着框架默认图标。
+
+### 打包元数据
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 应用名 | `KnowledgeTrainer` | MSI 安装目录与开始菜单名 |
+| 版本 | `1.0.0` | 桌面 `packageVersion` 与 Android `versionName` 一致 |
+| 厂商 / 版权 | `morefish` / `© 2026 morefish` | 安装程序的发布者信息 |
+| Windows 安装 | 用户目录（`perUserInstall`）、可选目录、开始菜单组、桌面快捷方式 | 不需要管理员权限 |
+| 升级标识 | `upgradeUuid = 5ba16a17-…` | **固定值**：MSI 靠它认"同一个产品"，改了等于换产品、无法覆盖升级 |
+
+### 产物（本机真实构建）
+
+| 产物 | 大小 | sha256（前 16 位） | 状态 |
+|---|---:|---|---|
+| `desktopApp/build/compose/binaries/main/msi/KnowledgeTrainer-1.0.0.msi` | 63.7 MB | `cd414e298ece176d…` | 可安装 |
+| `desktopApp/.../app/KnowledgeTrainer/`（免安装目录） | 129 MB | — | 含 `KnowledgeTrainer.exe` + 精简运行时 |
+| `androidApp/build/outputs/apk/debug/androidApp-debug.apk` | 13.6 MB | `e959e5a3629b2e19…` | 可直接装 |
+| `androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk` | 9.7 MB | `d657e1e362e4979e…` | **未签名**，需作者 keystore 才能装 |
+
+构建命令（可复现）：
+
+```bash
+./gradlew :desktopApp:createDistributable        # 免安装目录
+./gradlew :desktopApp:packageMsi                 # 需要 WiX（Compose 插件会自动解压）
+./gradlew :androidApp:assembleDebug :androidApp:assembleRelease \
+    -Porg.gradle.java.installations.paths=D:/Path/Java/JDK/jdk-25.0.1
+```
+
+### 启动实测
+
+`KnowledgeTrainer.exe` 启动 10 秒后进程驻留 334 MB、数据目录 `~/.knowledge-trainer` 正常命中，
+随后关闭、无残留进程。Android 侧用 `aapt2 dump badging` 核对：
+
+```
+package: name='morefish.knowledge.trainer' versionCode='1' versionName='1.0.0'
+application-label:'Knowledge Trainer'
+minSdkVersion:'24'  targetSdkVersion:'37'
+```
+
+并解包核对 `res/drawable-xxxhdpi-v4/ic_launcher_foreground.png` 与各密度
+`ic_launcher.png` 均为新图标（不是模板机器人）。
+
+## P10-3 验收执行（2026-10-28 真实执行）
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **608 用例 0 失败**（P9 后 601 + 架构 7） |
+| 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
+| 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
+| 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
+| 坏包回归（Skill 副本） | `python tools/qbank-authoring-skill/scripts/tests/run_bad_packages.py` | 49 passed / 0 failed |
+| Skill 自检 | `python tools/qbank-authoring-skill/scripts/selfcheck.py` | 44 passed / 0 failed |
+| 补丁回归 | `python tools/qbank/tests/run_bad_qbpatch.py` | 39 passed / 0 failed |
+| 四份真实题库 | `validate_qbank.py validate 业余无线电*.qbank` | A / B / C / 总 四个包全部 OK |
+
+## 本轮发现并修掉的不一致
+
+**制包 Skill 落后于工程内实现。** `tools/qbank/spec` 在 10-21 加了三样东西
+（`sources` 来源清单、`origin` 出处性质、`contentDigest` 整包摘要），但
+`tools/qbank-authoring-skill/references` 还停在 10-19 的冻结版。后果不是"少了个功能"，
+而是**两套校验器对同一个包给相反结论**：manifest schema 是 `additionalProperties: false`，
+应用造出来的带出处包会被 Skill 的旧校验器判为 `MANIFEST_INVALID`；作者照着 Skill 写的包
+又拿不到应用已经支持的能力。
+
+处理方式：把 `ktqbf` 的校验/打包模块、5 个 Schema 与规范正文同步进 Skill，
+坏包用例从 40 条并到 49 条，示例包按新规范重打（`contentDigest` 由打包器写入，
+所以 sha256 变了、规范化 digest 没变）：
+
+| 包 | 旧 sha256 | 新 sha256 |
+|---|---|---|
+| `minimal.qbank` | `0bd3e683…40aaf43a` | `47fd7bbc…0cbab842` |
+| `advanced.qbank` | `0e77558f…f105a8ce` | `ab8d0225…561bb380` |
+
+同步后立刻用**四份真实题库**做反向验证（它们由旧工具链生成、体积最大、结构最杂）：
+在新校验器下仍全部 `OK`，说明这次同步没有不知不觉收紧规则。
+
+Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `contentDigest` /
+`ordering` 草案），以及"拼错不猜"的枚举规则。
+
+## 已知限制（P10 之后仍然成立）
+
+| 限制 | 说明 |
+|---|---|
+| release APK 未签名 | 没有作者的 keystore，只能出 `-unsigned`；直接在 `applicationId` 相同的设备上装会被拒 |
+| 只在 Windows 上验证 | `Deb` / `Dmg` 只在配置里声明，没有在对应平台真正构建过 |
+| MSI 只在本机试装流程 | 没有在干净虚拟机里完整走"安装 → 运行 → 升级 → 卸载"，升级兼容性只有 `upgradeUuid` 这一层保证 |
+| Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
+| 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
+| 组合根偏大 | `AppController.kt` 3371 行，同时承担组合与界面状态；P10 没有拆，只保证了它是唯一接触 infrastructure 的界面文件 |
+| 没有 CI | 所有检查都是本机手动跑；`.github/workflows` 不存在，回归靠人记得跑 |
+| 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
+| 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
+
+## 下一步建议
+
+1. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 错题；
+2. **拆分 `AppController`**：把组合根（依赖装配）与界面状态分开，给端口化铺路；
+3. **SQLite 存储层**：解决"整库常驻内存 / 改一道题重写整个文件"两个已登记的限制；
+4. **CI**：把 608 个用例、49 条坏包、44 条自检、四份真实题库校验串成一条流水线。
