@@ -242,3 +242,15 @@ jobs:
             desktopApp/build/compose/binaries/main/msi/*.msi
             desktopApp/build/compose/binaries/main/app/**
           if-no-files-found: error
+
+      # jpackage 的真实报错只写在它自己的 err 日志里：Gradle 那边永远只说
+      # "External tool execution failed / Exit code: 1"。不传上来就只能猜。
+      - name: 上传 jpackage 日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-jpackage-logs
+          path: |
+            desktopApp/build/compose/logs
+            desktopApp/build/compose/tmp/packageMsi.args.txt
+          if-no-files-found: warn
