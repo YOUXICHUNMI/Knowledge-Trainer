@@ -116,9 +116,9 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **647 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **662 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16 + 移除题库 5 + 重组题 1 + 键盘 15 + 深色主题 15） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
-| 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
+| 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 59 张，含真实 B 类题库附图与 5 张深色 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
 | 坏包回归（Skill 副本） | `python tools/qbank-authoring-skill/scripts/tests/run_bad_packages.py` | 49 passed / 0 failed |
 | Skill 自检 | `python tools/qbank-authoring-skill/scripts/selfcheck.py` | 44 passed / 0 failed |
@@ -158,7 +158,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，647 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，662 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -513,8 +513,45 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 提示只在有物理键盘的设备上显示（`Platform.hasPhysicalKeyboard`，Android / iOS 为 false）：
 手机上写「按 A 选择」，只会让人到处找按键。
 
-647 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
+662 用例全绿；`:desktopApp:compileKotlin`、`:webApp:compileKotlinWasmJs`、
 `:androidApp:compileDebugKotlin` 均通过。
+
+### 18. 深色主题：把「只有浅色」这条限制消掉
+
+首页右上角多了一个胶囊 —— `◐ 跟随系统 / 浅色 / 深色`，点一下换下一个，选完立刻写盘。
+
+| 项 | 结果 |
+|---|---|
+| 令牌 | `PaletteScheme`（33 项）一套，`LightScheme` / `DarkScheme` 各一份；`Palette` 变成"读当前方案"的转发层，825 处调用点一行没改 |
+| 主色 | 拆成两个：`Accent`（当底、上面压白字）与 `AccentInk`（当字：链接、图标、胶囊文字） |
+| 语义色 | 深色下 `Correct/Wrong/Pending` 换成亮色、`*Soft` 换成暗底，仍是"深底浅字"的同一种关系 |
+| 硬编码清零 | Hero 的浅紫、题库头像四组渐变、日历四档热度、顶部晕染、进度条渐变全部收进令牌；`theme/` 之外已搜不到 `Color(0x` |
+| 持久化 | 新增 `application/port/Preferences.kt` + `JsonPreferencesRepository`（`prefs-v1.json`）。放在数据目录里，于是天然进 `.qbk` 备份 |
+| 切换 | `AppContent` 用 `key(dark)` 包住整棵树 |
+| 用例 | 647 → **662**（对比度 4 / 控制器 8 / 接线 1 / 深色截图 1 / 防手滑扫描 1） |
+
+三条值得记下来的：
+
+1. **深色不是把浅色调暗。** 第一版直接让 `Accent` 既当底又当字，结果是练习页的
+   「关联 / 工具 / 笔记」和顶栏胶囊糊在黑底上 —— `#4A3ECB` 压在纸上 7.4:1，压在墨夜上只有 2.3:1。
+   数学上这两个用途的区间不相交（白字要求它暗，当字要求它亮），所以主色必须分叉。
+2. **Hero 那颗白底按钮的字反而要固定。** 它是全页唯一不随主题变的底色（白），
+   `AccentDeep` 在深色下变亮之后，白底上的字直接消失。新增 `HeroActionInk` 恒为深靛蓝，
+   并由对比度断言钉住 —— 这是本次唯一一处"看着没问题、把截图放大才发现"的缺陷。
+3. **`key(dark)` 是保险，不是必需。** 把 `key` 拿掉再跑接线用例仍然全绿：`KtTheme` 换掉色方案后，
+   Material 的 CompositionLocal 已经把失效一路传了下去。注释与用例里都如实写了这一点；
+   保留 `key` 是因为"整屏跟着换"该由结构保证，而不是依赖运行时的传播细节。
+
+还有一条**防手滑**的源码扫描（`AccentInkUsageTest`）：`AccentInk` 一旦出现在
+`background(...)`、`bg =`、`containerColor =` 这些"这是块底色"的位置就报错。
+起因是本次真的写错过一次 —— 练习页选项左侧的序号徽标用 `AccentInk` 当底、
+上面压着 `OnAccent`，深色下就是白底白字。类型系统看不出两种 `Color` 的区别，
+所以留一条一句话的规则。
+
+深色下**人工看过**的截图：`55-home-dark`、`56-practice-feedback-dark`、
+`57-home-dark-phone`（420dp 手机宽度，胶囊不挤标题）、`58-history-dark`（判定色同框）、
+`59-toolbox-dark`（计算器键盘）。其余页面没有逐张看，靠共用令牌与 46 条对比度断言保证 ——
+这句话写在这里，而不是藏在"已全面支持深色"后面。
 
 ## 已知限制（P10 之后仍然成立）
 
@@ -526,10 +563,15 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 647 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 662 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐、离屏渲染的按键接线测试能否在没有显示器的 runner 上跑，都要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 | 键盘作答只覆盖选择与提交 | 图谱、笔记、备份这些页面还没有快捷键；练习页也还没有「跳过 / 收藏」的键位 —— 先把最热的那条路走通 |
+| 深色只人工核对了 5 张截图 | 首页、反馈、手机宽度、历史、工具箱看了；导入、图谱、备份、AI、笔记等页靠共用令牌与 `PaletteContrastTest` 的 46 条对比度断言保证，没有逐张核对 |
+| 深色下 Hero 主按钮仍是白底 | "纸上一块白"是刻意的层次；代价是它的字色 `HeroActionInk` 必须固定，不跟着主题走 |
+| 浅色的 `Faint` 只有 2.95:1 | 它只用于计数、脚注这类提示级文字，不承担正文；深色下同一项是 4.46:1 |
+| 换主题时整棵树重建 | 滚动位置与局部展开状态会重置（切主题是低频动作，换来的是"一处定义、处处跟随"） |
+| 跟随系统依赖平台上报 | 桌面 / Android / Web 由各自运行时提供；iOS 未在真机验证过 |
 | 只能整库移除，不能删单题 | 题库内容属于作者：要改单题走 `.qbpatch`，本机只能追加自己的题。移除不可撤销，退路只有备份 |
 
 ## 下一步建议
@@ -541,3 +583,6 @@ P10 交付后回看首页，发现一个功能缺口：题库只能导入，**�
    所以只能 `jvm`/`android`/`ios` 走 SQLite、`js`/`wasm` 继续文件或内存，端口得先长出查询语义
    （现在 `TextStorage` 只会读整份文本，而 SQLite 的价值恰恰在"只读需要的部分"）。
    真做之前先补一次基线：用 `KT_BENCH=1` 重跑十万题，把开工前的数字写下来。
+4. **深色剩下的页面逐张核对**（小活但值得做）：把 `KT_SHOTS=1` 的截图集按深色再跑一遍，
+   对着导入、图谱、备份、AI、笔记这几页看一遍；有漏网的硬编码颜色，`PaletteContrastTest` 看不见
+   （它只核对令牌本身，不管谁没用令牌）。
