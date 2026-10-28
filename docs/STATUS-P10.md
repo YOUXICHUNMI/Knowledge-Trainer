@@ -14,7 +14,7 @@ release APK 9.7 MB 未签名），桌面端 exe 实测可启动；
 
 ## P10-1 架构验收：把"依赖只能指向内层"变成测试
 
-新增 `shared/src/jvmTest/.../architecture/ArchitectureTest.kt`（7 个用例），
+新增 `shared/src/jvmTest/.../architecture/ArchitectureTest.kt`（9 个用例），
 直接扫描 `shared/src/commonMain` 的**真实源码**按目录分层，而不是靠人自觉：
 
 | 断言 | 规则 | 当前结果 |
@@ -26,6 +26,8 @@ release APK 9.7 MB 未签名），桌面端 exe 实测可启动；
 | 登记项必须仍然真实存在 | 修好了要删登记，清单不许说谎 | 5/5 仍有效 |
 | commonMain 不出现 JVM/Android 专属 API | `java.*` / `javax.*` / `android.*` / `sun.*` | 0 处（122 个 Kotlin 文件） |
 | 扫描确实覆盖源码 | 防止路径算错导致"全绿但没检查" | 122 个文件，断言 ≥100 |
+| 功能包不互相引用、不碰界面 | `presentation/<功能>/` 只依赖 domain / application 与自己，`presentation` 顶层仅允许常量 | 0 处（12 个功能包） |
+| 子控制器不导航 | 功能包里不出现 `Screen` | 0 处（12 个功能包） |
 
 ### 顺带修掉的越层
 
@@ -114,7 +116,7 @@ minSdkVersion:'24'  targetSdkVersion:'37'
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 共享层全量单测 | `./gradlew :shared:jvmTest` | **623 用例 0 失败**（P9 后 601 + 架构 7 + 拆分相关 15） |
+| 共享层全量单测 | `./gradlew :shared:jvmTest` | **626 用例 0 失败**（P9 后 601 + 架构 9 + 拆分相关 16） |
 | 十万题基准 | `KT_BENCH=1 ./gradlew :shared:jvmTest --tests "*LargeBankTest*"` | 导入 604ms / 写入 567ms / **重开 3ms** / 读题 538ms，峰值堆 113 MB |
 | 界面离屏截图 | `KT_SHOTS=1 … --tests "*ScreenshotTest*"` | 54 张，含真实 B 类题库附图 |
 | 坏包回归（工程内） | `python tools/qbank/tests/run_bad_packages.py` | 49 passed / 0 failed |
@@ -156,7 +158,7 @@ Skill 的 `SKILL.md` 也补上了可选字段说明（`sources` / `origin` / `co
 | 触发 | 任务 | 内容 |
 |---|---|---|
 | push / PR（必检） | `toolchain` | `python tools/verify/run_all.py` —— 12 项：坏包 49、扩展包、补丁 39、Skill 自检 44、Skill 坏包 49、可复现构建 ×2、样本包校验 ×6 |
-| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，624 用例，失败时上传测试报告 |
+| push / PR（必检） | `jvm-tests` | `./gradlew :shared:jvmTest`，626 用例，失败时上传测试报告 |
 | 手动触发 | `android` / `desktop` | debug+release APK、MSI + 免安装目录，产物作为 artifact 上传 |
 
 新增 `tools/verify/run_all.py`：本地与 CI 调**同一个脚本、同一份清单**。在此之前，
@@ -419,6 +421,24 @@ ID 是进度、复核、错题本匹配题目的唯一依据，撞了就会让�
 
 文件从 1691 行降到 1622 行；623 → 624 用例全绿，行为不变。
 
+### 15. 拆分之后补的护栏：把两条硬规则变成断言
+
+十二条切完，`AppController` 的边界靠的是"每次提交都跑全量测试"和人的自觉。但拆分计划开头的
+三条硬规则里，前两条（子控制器互不引用、子控制器不碰界面与导航）此前没有任何测试守着 ——
+"写在文档里的规则"和"没人检查的规则"是同义词，下一个功能包只要 import 一下邻居就破了。
+
+`ArchitectureTest` 补了两条（共 9 条）：
+
+- **功能包只认 domain 与 application**：自动识别 `presentation` 下"装着 `*Controller.kt`"的目录
+  （算出来的，不写死清单 —— 笔记那一刀漏在名单外，正说明名单会漏），要求其中每个文件只 import
+  `domain` / `application` / 自己这个包，外加允许 `presentation` 顶层的常量（目前只有 `UI_LOCALE`）。
+  `Screen` 也是顶层类型但它就是路由本身，单独排除，否则"引用导航"能借道顶层类型溜进来。
+- **功能控制器里没有导航语句**：功能包里不出现 `Screen`（跳过注释行）。
+
+两条都验过"能失败"：临时往 `NoteController` 里塞一个 `graph.GraphController` 的 import 与一行
+`Screen.HOME`，两条断言各自失败并指出文件与行号；撤掉后 626 用例全绿。断言里另有
+"至少认得出 12 个功能包"，防止路径算错时安静地全绿 —— 这与已有那条"扫描覆盖源码"同一个理由。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
@@ -429,13 +449,13 @@ ID 是进度、复核、错题本匹配题目的唯一依据，撞了就会让�
 | Android 未上真机 | 只做了编译、打包、清单与资源核对；没跑仪器测试，也没在设备上走一遍导入 → 做题 |
 | 架构债务 4 处 | 见 P10-1 登记表；新增越层会被测试拦住，存量还在 |
 | 组合根仍偏大 | 已从 3371 行降到 1622 行（工具箱、历史、练习设置、AI 讲解、手工编辑、历史复核、批量队列、导入、练习、知识图谱、备份、笔记十二刀）；它仍是唯一接触 infrastructure 的界面文件，靠的是把用例包成 lambda 递给子控制器 |
-| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 624 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
+| CI 尚未在真实 runner 上跑过 | 工作流已提交（Python 全量回归 + 626 用例），但本机无法验证 GitHub Actions 第一次运行；Ubuntu 上 compileSdk 37 是否能被 AGP 自动补齐，要等首次运行确认 |
 | 存储层仍是文件 | 与 P9 相同：目录 + 每库 NDJSON，不是 SQLite；十万题能开（3ms），但整库解析仍要 538ms / 113MB |
 | 界面语言只有中文 | 多语言做的是题库语言；`SKILL.md`、应用文案仍是硬编码中文 |
 
 ## 下一步建议
 
 1. **首次跑通 CI**：push 一次看 `toolchain` 与 `jvm-tests` 是否在 Ubuntu 上绿；重点盯 compileSdk 37；
-2. **给拆分结果补上回归护栏**：12 个关注点已全部拆完，但「子控制器之间不互相引用」「子控制器不碰界面与导航」这两条硬规则目前只写在文档里 —— 下一步把它们变成 `ArchitectureTest` 的断言（扫描 `presentation/<功能>/` 的 import 与 `Screen.` 引用）；
+2. **SQLite 存储层**（见第 4 条）：十二刀与两条护栏都已落地，组合根不再是瓶颈，剩下最贵的是「整库常驻内存 / 改一道题重写整个文件」；
 3. **真机验收**：MSI 在干净机器上跑一遍安装/卸载，Android 装 debug 包走一遍导入 → 练习 → 错题；
 4. **SQLite 存储层**：解决"整库常驻内存 / 改一道题重写整个文件"两个已登记的限制。

@@ -177,6 +177,79 @@ class ArchitectureTest {
         )
     }
 
+    // ---------------------------------------------------------------- 拆分之后的边界
+
+    /**
+     * 功能包：`presentation` 下"装着 `*Controller.kt`"的那一层目录。
+     *
+     * 由目录内容算出来，而不是在测试里写死一份清单 —— 第十一项拆完后补做笔记那一刀，
+     * 正是因为"名单"漏了它。下一个功能包因此会自动进入检查；代价是路径一旦算错就会
+     * 安静地全绿，所以下面的断言里另有一条"至少认得出 12 个包"。
+     */
+    private val featurePackages: List<String> = File(commonMain, "presentation").listFiles().orEmpty()
+        .filter { dir ->
+            dir.isDirectory && dir.walkTopDown().any { it.isFile && it.name.endsWith("Controller.kt") }
+        }
+        .map { "presentation/${it.name}" }
+        .sorted()
+
+    private fun packageOf(path: String): String? =
+        featurePackages.firstOrNull { path.startsWith("$it/") }
+
+    private fun featureSources(): List<Pair<String, File>> =
+        kotlinSources().mapNotNull { file -> packageOf(relative(file))?.let { it to file } }
+
+    /**
+     * 三条硬规则里的第一条：**子控制器之间不互相引用**，以及它的前提 —— 不碰界面。
+     *
+     * 拆成十二个包之后，跨功能协作（导入完成要重读题库、删除关系要问扩展包）全靠组合根
+     * 串联。一旦两个控制器互相 import，再拆就变成"拆开又焊上"：改一个功能要读另一个的
+     * 内部状态，而这正是拆分要消灭的东西。
+     */
+    @Test
+    fun `功能包只认 domain 与 application，既不互相引用也不碰界面`() {
+        assertTrue(
+            featurePackages.size >= 12,
+            "只认出 ${featurePackages.size} 个功能包（$featurePackages），路径可能算错了",
+        )
+        val root = "morefish.knowledge.trainer.presentation"
+        val hits = featureSources().flatMap { (pkg, file) ->
+            importsOf(file).mapNotNull { import ->
+                if (!import.target.startsWith("$root.")) return@mapNotNull null
+                val rest = import.target.removePrefix("$root.")
+                val ownPackage = rest.substringBefore('.') == pkg.substringAfterLast('/')
+                // 允许 presentation 顶层的常量（如 UI_LOCALE）；Screen 不是常量而是路由本身，
+                // 单独排除，否则"引用导航"会借道顶层类型溜进来。
+                val topLevelValue = !rest.contains('.') && rest != "Screen"
+                if (ownPackage || topLevelValue) null else "$pkg ← $import"
+            }
+        }
+        assertTrue(
+            hits.isEmpty(),
+            "跨功能的协作一律由组合根串联，子控制器之间互不认识；界面（screens / ui / theme）" +
+                "更不该出现在这里。越界引用：\n" + hits.joinToString("\n") { "  • $it" },
+        )
+    }
+
+    /** 三条硬规则里的第二条：**子控制器不导航**。下一屏由调用点决定，否则路由就没有单一入口。 */
+    @Test
+    fun `功能控制器里没有导航语句`() {
+        val navigation = Regex("""\bScreen\b""")
+        val hits = featureSources().flatMap { (pkg, file) ->
+            file.readLines().mapIndexedNotNull { index, raw ->
+                val code = raw.trim()
+                val comment = code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")
+                if (comment || !navigation.containsMatchIn(code)) null
+                else "$pkg/${file.name}:${index + 1}  $code"
+            }
+        }
+        assertTrue(
+            hits.isEmpty(),
+            "子控制器只回结论（Saved / Blocked / 有没有下一题），去哪儿由组合根决定。" +
+                "出现导航的地方：\n" + hits.joinToString("\n") { "  • $it" },
+        )
+    }
+
     @Test
     fun `扫描确实覆盖了共享层源码`() {
         val files = kotlinSources()

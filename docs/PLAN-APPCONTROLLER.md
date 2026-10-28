@@ -50,6 +50,10 @@ presentation/
 3. **每一刀都要让 `:shared:jvmTest` 全绿后再落下一刀。** 不攒批；一旦出现
    "先拆完再一起修"，回归就没法定位到具体某刀。
 
+前两条现在**不是口号**：`ArchitectureTest` 会扫描 `presentation/<功能>/` 的真实源码，
+任何跨功能 import、对 `screens`/`ui`/`theme` 的依赖，或出现 `Screen` 的导航语句，都会让
+`:shared:jvmTest` 直接失败。第三条规定的是流程，守不住，只能靠每次提交里那句用例数。
+
 ## 留下的那一半
 
 拆完后 `AppController` 仍会有约 1000 行，这是对的 —— 它承担的是：
@@ -395,3 +399,20 @@ presentation/
 - 调用方 45 处：`NoteEditorScreen` 8、`NotesScreen` 4、`HomeScreen` 2、
   `AppControllerTest` 26、`ScreenshotTest` 5。
 - 文件从 1691 行降到 1622 行；623 → 624 用例全绿，行为不变。
+
+## 拆分之后补的护栏：把硬规则变成断言
+
+十二刀拆完，前两条硬规则（子控制器互不引用、子控制器不碰界面与导航）此前只写在文档里 ——
+而"写在文档里的规则"和"没人检查的规则"是同义词。补了两条架构断言：
+
+- `功能包只认 domain 与 application，既不互相引用也不碰界面`：识别 `presentation` 下所有
+  "装着 `*Controller.kt`"的目录（算出来的，不是写死的清单 —— 笔记那一刀漏在名单外，
+  正是因为名单会漏），要求里面每个文件只 import `domain` / `application` 与自己这个包，
+  外加允许 `presentation` 顶层的常量（目前只有 `UI_LOCALE`）。`Screen` 虽然也是顶层类型，
+  但它就是路由本身，所以单独排除，否则"引用导航"能借道顶层类型溜进来。
+- `功能控制器里没有导航语句`：功能包里不出现 `Screen`（跳过注释行）。下一屏由调用点决定，
+  子控制器只回 `Saved` / `Blocked` / "还有没有下一题"这类结论。
+
+两条都验过"能失败"：临时往 `NoteController` 里塞一个 `graph.GraphController` 的 import
+与一行 `Screen.HOME`，两条断言各自报错并指出文件与行号；撤掉后 626 用例全绿。
+断言里还有一条"至少认得出 12 个功能包"，防止路径算错时安静地全绿。
