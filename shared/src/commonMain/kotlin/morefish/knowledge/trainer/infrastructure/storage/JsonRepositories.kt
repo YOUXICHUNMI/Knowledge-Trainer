@@ -106,8 +106,8 @@ class JsonBankRepository(
     override suspend fun save(bank: QuestionBank) {
         mutex.withLock {
             val catalog = readCatalogLocked()
-            val (count, typeCounts) = writeQuestionsLocked(bank.bankId, bank.questions)
-            val meta = bank.toMeta(count, typeCounts)
+            val written = writeQuestionsLocked(bank.bankId, bank.questions)
+            val meta = bank.toMeta(written)
             val next = catalog.filterNot { it.bankId == bank.bankId } + meta
             storage.write(BANKS_FILE, json.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = next)))
         }
@@ -236,7 +236,7 @@ class JsonBankRepository(
 
         val metas = legacy.banks.map { dto ->
             val questions = dto.questions.mapNotNull { it.toDomain() }
-            val (count, typeCounts) = writeQuestionsLocked(dto.bankId, questions)
+            val written = writeQuestionsLocked(dto.bankId, questions)
             BankMetaDto(
                 bankId = dto.bankId,
                 title = dto.title,
@@ -244,10 +244,11 @@ class JsonBankRepository(
                 importedAtMillis = dto.importedAtMillis,
                 sourceLabel = dto.sourceLabel,
                 contentRevision = dto.contentRevision,
-                fingerprint = dto.fingerprint
-                    .ifBlank { Fingerprint.ofQuestions(questions.map { it.contentFingerprint() }) },
-                questionCount = count,
-                typeCounts = typeCounts,
+                // 用实际内容的指纹，不抄旧文件里那个：旧布局下它同样可能是"copy 出来的旧值"，
+                // 而迁移是唯一一次"看见了全部题目"的机会，没有理由继续传一个可能说谎的数。
+                fingerprint = written.fingerprint,
+                questionCount = written.count,
+                typeCounts = written.typeCounts,
                 // 旧布局没有出处信息（字段是 P8 第三块才加的），迁移时留空 —— 不伪造
             )
         }
@@ -276,18 +277,31 @@ class JsonBankRepository(
 
     // ---- 写 ----
 
-    /** 返回实际写入的条数与题型分布；这两个值随后进目录。 */
-    private fun writeQuestionsLocked(bankId: String, questions: List<Question>): Pair<Int, Map<String, Int>> {
+    /**
+     * 返回实际写入的条数、题型分布与**内容指纹**；这三个值随后进目录。
+     *
+     * 指纹必须在这里算，不能由调用方传：`QuestionBank.copy(questions = …)` 会
+     * 原样保留旧的 `fingerprint`，于是"加了一道题，目录里还写着老内容的指纹"。
+     * 后果不是界面显示错误 —— 而是 `ImportBankUseCase` 拿它判断"这个库是不是导入过"，
+     * 从这一刻起就会答错（把改过的库当成原包）。
+     *
+     * 代价是每次写库都要把十万道题的内容再哈希一遍（O(n)）；这一点在
+     * `docs/STATUS-P10.md` 的存储基线里有实测数字 —— SQLite 那一层也躲不掉它，
+     * 想做到 O(1) 就得把"整库指纹"换成增量结构，那是另一件事。
+     */
+    private fun writeQuestionsLocked(bankId: String, questions: List<Question>): WrittenQuestions {
         val builder = StringBuilder()
         val counts = mutableMapOf<String, Int>()
+        val parts = ArrayList<String>(questions.size)
         var written = 0
         questions.forEach { question ->
             builder.append(questionJson.encodeToString(QuestionDto.serializer(), question.toDto())).append('\n')
+            parts += question.contentFingerprint()
             counts[question.type.wireName] = (counts[question.type.wireName] ?: 0) + 1
             written++
         }
         storage.write(questionFileOf(bankId), builder.toString())
-        return written to counts
+        return WrittenQuestions(written, counts, Fingerprint.ofQuestions(parts))
     }
 
     private companion object {
@@ -369,16 +383,23 @@ class JsonAttemptRepository(
     }
 }
 
-private fun QuestionBank.toMeta(questionCount: Int, typeCounts: Map<String, Int>): BankMetaDto = BankMetaDto(
+/** [JsonBankRepository.writeQuestionsLocked] 的产物：目录里那三个"必须等于实际内容"的字段。 */
+internal class WrittenQuestions(
+    val count: Int,
+    val typeCounts: Map<String, Int>,
+    val fingerprint: String,
+)
+
+private fun QuestionBank.toMeta(written: WrittenQuestions): BankMetaDto = BankMetaDto(
     bankId = bankId,
     title = title,
     sourceLocale = sourceLocale,
     importedAtMillis = importedAtMillis,
     sourceLabel = sourceLabel,
     contentRevision = contentRevision,
-    fingerprint = fingerprint,
-    questionCount = questionCount,
-    typeCounts = typeCounts,
+    fingerprint = written.fingerprint,
+    questionCount = written.count,
+    typeCounts = written.typeCounts,
     provenance = provenance.toDto(),
     locales = localeCoverage.orEmpty().map { LocaleCoverageDto(it.locale, it.covered, it.total) },
 )

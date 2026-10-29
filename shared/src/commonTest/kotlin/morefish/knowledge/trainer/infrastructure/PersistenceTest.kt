@@ -5,6 +5,7 @@ import morefish.knowledge.trainer.application.port.InMemoryTextStorage
 import morefish.knowledge.trainer.application.usecase.SubmitAnswerUseCase
 import morefish.knowledge.trainer.domain.i18n.LocaleCoverage
 import morefish.knowledge.trainer.domain.model.AnswerInput
+import morefish.knowledge.trainer.domain.model.Fingerprint
 import morefish.knowledge.trainer.domain.model.PracticeSession
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
@@ -23,6 +24,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -353,6 +355,15 @@ class PersistenceTest {
             "目录里的题型分布也要跟着变，不能留着旧值",
         )
         assertEquals(listOf("q1", "q2"), reopened.questions.map { it.questionId })
+
+        // 指纹同理：`copy(questions = …)` 会原样保留旧 fingerprint，
+        // 照抄它等于告诉后来的人"这个库还是原来那份内容"。而导入就是按指纹判重复的。
+        assertNotEquals(loaded.fingerprint, reopened.fingerprint, "内容变了，目录里的指纹必须跟着变")
+        assertEquals(
+            Fingerprint.ofQuestions(reopened.questions.map { it.contentFingerprint() }),
+            reopened.fingerprint,
+            "目录里的指纹必须等于实际内容的指纹",
+        )
     }
 
     /**

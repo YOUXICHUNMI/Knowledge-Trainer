@@ -2,8 +2,11 @@ package morefish.knowledge.trainer.infrastructure
 
 import kotlinx.coroutines.test.runTest
 import morefish.knowledge.trainer.application.port.TextStorage
+import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.Fingerprint
+import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
+import morefish.knowledge.trainer.domain.model.QuestionOption
 import morefish.knowledge.trainer.domain.model.QuestionType
 import morefish.knowledge.trainer.application.port.ImportParseResult
 import morefish.knowledge.trainer.infrastructure.importing.JsonQuestionImporter
@@ -17,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -121,6 +125,91 @@ class LargeBankTest {
         assertTrue(again.loadWarnings.isEmpty())
     }
 
+    /**
+     * 日常写操作的代价：在十万题的库上加**一道**题，会牵动整库。
+     *
+     * 走的不是合成路径，就是用户点「保存」的那条：
+     * `QuestionEditorController.add()` = `find(bankId)` → `bank.questions + question` → `save(...)`。
+     * 其中 `bank.questions` 是按需解析的，取第一道题就整库解析（十万个对象）；
+     * `save()` 又把整库重新序列化写一遍（约 50MB）。所以"加一道 400 字节的题"= 整库读 + 整库写。
+     *
+     * 拆成几段单独量，是因为 P11 的 SQLite 要解决的正是**每一段各自**的问题：
+     * 取一道题该变成 O(log n)、写一道题该变成"只写一行"。这里量到的数字是那件事的对照组。
+     *
+     * 同样不写死耗时上限。硬约束放在"改完真的读得回来、其余题没被改坏、指纹跟着内容走"。
+     */
+    @Test
+    fun addingOneQuestionToLargeBankReadsAndRewritesEverything() = runTest {
+        val root = createTempDir("kt-large-bank-writes")
+        val storage = FileTextStorage(root)
+        // 准备阶段的导入/写入不属于"日常操作"，记进这个临时 Mark（不写盘）
+        val fingerprintBefore = importAndSave(target, storage, root, Mark("unused"))
+
+        val mark = Mark("large-bank-writes-report.txt")
+        val repository = JsonBankRepository(storage)
+        val questionsFile = File(root, questionFileOf("bench-bank"))
+        val catalogFile = File(root, BANKS_FILE)
+        val bankBytes = questionsFile.length()
+
+        // 1) 精确取一道题：图谱刷新、搜索结果点进去都属于这类
+        val probe = target / 2
+        val ref = QuestionRef("bench-bank", "q-" + probe.toString().padStart(6, '0'))
+        val located = repository.locate(listOf(ref))
+        mark.record("精确取一道题（读整份文件 + 扫描到该行）", bankBytes)
+        assertEquals("第 $probe 题：以下说法正确的是？", located.getValue(ref).promptMarkdown)
+
+        // 2) 搜一个只命中一道题的词，且这一道在文件末尾（最坏情况）
+        val hits = repository.searchQuestions("第 $target 题", 5)
+        mark.record("搜题干（全表扫描）", bankBytes)
+        assertEquals(1, hits.size, "只该命中最后一道题：${hits.map { it.questionId }}")
+
+        // 3) 加一道题 —— 把真实路径拆成两段分别量
+        val listed = repository.find("bench-bank")!!
+        mark.record("找到题库（只读目录）", catalogFile.length())
+
+        val loaded = listed.questions.toList()
+        assertEquals(target, loaded.size)
+        mark.record("读回整库（加一题必须先全读）", bankBytes)
+
+        // 3b) 为了让目录里的指纹不说谎，写库时还要把整库内容哈希一遍。
+        // 这一步是 P11 的隐形天花板：SQLite 写一行是 O(1)，但"整库指纹"本身是 O(n)，
+        // 不换成增量结构的话，写一道题的成本永远下不到"只写一行"那么多。
+        Fingerprint.ofQuestions(loaded.map { it.contentFingerprint() })
+        mark.record("重算整库指纹（save 内部还要再做一遍）", bankBytes)
+
+        val added = Question(
+            questionId = "q-new",
+            type = QuestionType.SINGLE_CHOICE,
+            promptMarkdown = "手工新建的一道题：以下说法正确的是？",
+            options = listOf(QuestionOption("A", "选项甲"), QuestionOption("B", "选项乙")),
+            correctOptionIds = setOf("B"),
+        )
+        repository.save(
+            listed.copy(questions = loaded + added, contentRevision = listed.contentRevision + 1),
+        )
+        mark.record("重写整库（新增一行 → 整个文件）", questionsFile.length())
+
+        // 4) 改完必须读得回来，且只多了那一题
+        val reopened = JsonBankRepository(storage).list().single()
+        assertEquals(target + 1, reopened.questionCount, "目录里的题数要跟着变")
+        assertEquals("q-000001", reopened.questions.first().questionId, "原有题目的顺序不该被打乱")
+        assertEquals("q-new", reopened.questions.last().questionId)
+        assertEquals(
+            Fingerprint.ofQuestions(reopened.questions.map { it.contentFingerprint() }),
+            reopened.fingerprint,
+            "目录里的指纹必须等于实际内容的指纹 —— 否则「这个库是不是导入过」从这一刻开始就答错了",
+        )
+        assertNotEquals(fingerprintBefore, reopened.fingerprint, "内容变了，指纹必须跟着变")
+
+        mark.dump()
+        print(mark.render())
+        val lineBytes = questionsFile.readLines().last().toByteArray().size
+        println(
+            "新增一行 ${lineBytes} 字节，为它重写了 ${questionsFile.length() / 1024} KB" +
+                "（${(questionsFile.length().toDouble() / lineBytes).toInt()} 倍）",
+        )
+    }
+
     // ---- 造数据 ----
 
     private suspend fun importAndSave(count: Int, storage: TextStorage, root: File, mark: Mark): String {
@@ -172,7 +261,7 @@ class LargeBankTest {
 
     // ---- 记录 ----
 
-    private class Mark {
+    private class Mark(private val reportName: String = "large-bank-report.txt") {
         private val rows = mutableListOf<String>()
         private var lastAt = System.nanoTime()
 
@@ -194,7 +283,7 @@ class LargeBankTest {
         }
 
         fun dump() {
-            runCatching { File("build/large-bank-report.txt").writeText(render()) }
+            runCatching { File("build/$reportName").writeText(render()) }
         }
 
         /**
