@@ -2,6 +2,7 @@ package morefish.knowledge.trainer.infrastructure
 
 import kotlinx.coroutines.test.runTest
 import morefish.knowledge.trainer.application.port.AddQuestionResult
+import morefish.knowledge.trainer.application.port.RandomAccessText
 import morefish.knowledge.trainer.application.port.TextStorage
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.Fingerprint
@@ -15,6 +16,7 @@ import morefish.knowledge.trainer.infrastructure.storage.BANKS_FILE
 import morefish.knowledge.trainer.infrastructure.storage.DeferredQuestions
 import morefish.knowledge.trainer.infrastructure.storage.FileTextStorage
 import morefish.knowledge.trainer.infrastructure.storage.JsonBankRepository
+import morefish.knowledge.trainer.infrastructure.storage.indexFileOf
 import morefish.knowledge.trainer.infrastructure.storage.questionFileOf
 import java.io.File
 import kotlin.test.Test
@@ -81,6 +83,9 @@ class LargeBankTest {
             "重算指纹不一致 = 有字段在往返中丢了",
         )
 
+        // 十万题一轮会留下约 200MB 临时文件（三个用例各一份）。跑完就收掉 ——
+        // 这条链一天跑几次，攒起来能把磁盘写满，下次跑的时候报"磁盘空间不足"，人还以为是代码坏了。
+        cleanup(root)
         mark.dump()
         print(mark.render())
     }
@@ -157,8 +162,19 @@ class LargeBankTest {
         // 1) 精确取一道题：图谱刷新、搜索结果点进去都属于这类
         val probe = target / 2
         val ref = QuestionRef("bench-bank", "q-" + probe.toString().padStart(6, '0'))
+
+        // 1a) 对照：没有"读一段"能力时（Web / 内存后端）只能读整份文件再扫
+        val scanOnly = JsonBankRepository(PlainStorage(storage))
+        val scanned = scanOnly.locate(listOf(ref))
+        mark.record("对照：定点取题（读整份 + 扫描，无随机读能力）", bankBytes)
+        assertEquals("第 $probe 题：以下说法正确的是？", scanned.getValue(ref).promptMarkdown)
+
+        // 1b) 有索引时：第一次要先解析该库的索引（每个库一张小表），之后只读那一行
+        repository.locate(listOf(ref))
+        mark.record("定点取题·第一次（解析该库索引）", bankBytes)
+
         val located = repository.locate(listOf(ref))
-        mark.record("精确取一道题（读整份文件 + 扫描到该行）", bankBytes)
+        mark.record("定点取题·之后（只读那一行）", bankBytes)
         assertEquals("第 $probe 题：以下说法正确的是？", located.getValue(ref).promptMarkdown)
 
         // 2) 搜一个只命中一道题的词，且这一道在文件末尾（最坏情况）
@@ -204,13 +220,57 @@ class LargeBankTest {
         )
         assertNotEquals(fingerprintBefore, reopened.fingerprint, "内容变了，指纹必须跟着变")
 
-        mark.dump()
-        print(mark.render())
+        // 十万题一轮会留下约 200MB 临时文件（三个用例各一份）。跑完就收掉 ——
+        // 这条链一天跑几次，攒起来能把磁盘写满，下次跑的时候报"磁盘空间不足"，人还以为是代码坏了。
         val lineBytes = questionsFile.readLines().last().toByteArray().size
         println(
             "新增一行 $lineBytes 字节，为它整库重写了 ${questionsFile.length() / 1024} KB" +
                 "（${(questionsFile.length().toDouble() / lineBytes).toInt()} 倍）",
         )
+        cleanup(root)
+        mark.dump()
+        print(mark.render())
+    }
+
+    /**
+     * 「取一道题」在十万题的库上到底读了多少。
+     *
+     * 判据是**整份读了几次**，不是快了多少毫秒：耗时随机器波动，而"有没有把 50MB 读回来"
+     * 是个是非问题。把 locate 改回整库扫描，这里的 [CountingStorage.wholeQuestionReads] 会立刻变成 1。
+     */
+    @Test
+    fun locatingAQuestionReadsOneLineNotTheWholeBank() = runTest {
+        val root = createTempDir("kt-large-bank-locate")
+        val files = FileTextStorage(root)
+        importAndSave(target, files, root, Mark("unused"))
+
+        val storage = CountingStorage(files)
+        val mark = Mark("large-bank-locate-report.txt")
+        val repository = JsonBankRepository(storage)
+        val probe = target / 2
+        val ref = QuestionRef("bench-bank", "q-" + probe.toString().padStart(6, '0'))
+
+        // 第一次：内存里没有索引，要从索引文件（每个库一张小表）解析出来
+        val first = repository.locate(listOf(ref))
+        mark.record("第一次定位（解析该库的索引）", File(root, indexFileOf("bench-bank")).length())
+        assertEquals("第 $probe 题：以下说法正确的是？", first.getValue(ref).promptMarkdown)
+
+        // 之后：只读那一道题的那一行
+        storage.resetReads()
+        val again = repository.locate(listOf(ref))
+        val rangeBytes = storage.rangeBytes
+        mark.record("再定位（只读那一行）", rangeBytes)
+
+        assertEquals("第 $probe 题：以下说法正确的是？", again.getValue(ref).promptMarkdown)
+        assertEquals(0, storage.wholeQuestionReads, "定位不该把整份题目文件读回来（那是一整份 50MB）")
+        assertTrue(rangeBytes in 1..4_096, "一次定位只该读几百字节，实际读了 $rangeBytes 字节")
+
+        // 十万题一轮会留下约 200MB 临时文件（三个用例各一份）。跑完就收掉 ——
+        // 这条链一天跑几次，攒起来能把磁盘写满，下次跑的时候报"磁盘空间不足"，人还以为是代码坏了。
+        println("库 ${files.byteLength(questionFileOf("bench-bank"))} 字节；取一道题读 $rangeBytes 字节")
+        cleanup(root)
+        mark.dump()
+        print(mark.render())
     }
 
     /**
@@ -261,13 +321,17 @@ class LargeBankTest {
         // 写盘量：只该是这几行加几次目录，与库有多大无关。
         // 一旦实现退化成"读出来改完再整库写回"，这里会立刻变成整个文件的大小。
         val lineBytes = questionsFile.readLines().last().toByteArray().size
-        val budget = (lineBytes + 2) * repeats + 8 * 1024 // 8KB 余量给目录那几次小写入
+        // 每题写：题目行 + 索引行（"题号 \t 起始 \t 长度"）+ 目录。索引行是这笔账里新添的一小项。
+        val budget = (lineBytes + 64) * repeats + 8 * 1024 // 8KB 余量给目录那几次小写入
         assertTrue(
             written < budget,
             "追加 $repeats 道题只该写约 ${lineBytes * repeats} 字节（加目录），实际写了 $written 字节" +
                 "（整个库才 $bankBytes 字节）",
         )
 
+        // 十万题一轮会留下约 200MB 临时文件（三个用例各一份）。跑完就收掉 ——
+        // 这条链一天跑几次，攒起来能把磁盘写满，下次跑的时候报"磁盘空间不足"，人还以为是代码坏了。
+        cleanup(root)
         mark.dump()
         print(mark.render())
         println(
@@ -276,18 +340,46 @@ class LargeBankTest {
         )
     }
 
+    /** 只暴露 [TextStorage] 的装饰器：模拟 Web / 内存后端 —— 拿不到"读一段"的能力。 */
+    private class PlainStorage(private val delegate: TextStorage) : TextStorage {
+        override val isPersistent: Boolean get() = delegate.isPersistent
+        override fun read(name: String): String? = delegate.read(name)
+        override fun write(name: String, content: String) = delegate.write(name, content)
+        override fun appendLine(name: String, line: String) = delegate.appendLine(name, line)
+        override fun delete(name: String): Boolean = delegate.delete(name)
+    }
+
     /**
      * 量"这次到底写了多少字节"的装饰器。
      *
      * 用它而不是比较文件长度：整库重写之后文件也只多一行，长度差分辨不出重写与追加。
      */
-    private class CountingStorage(private val delegate: TextStorage) : TextStorage {
+    private class CountingStorage(private val delegate: TextStorage) : TextStorage, RandomAccessText {
+
+        private val random = delegate as RandomAccessText
+
         var writtenBytes = 0L
             private set
 
+        /** 整份读过几次题目文件 —— "取一道题"不该让这个数动。 */
+        var wholeQuestionReads = 0
+            private set
+
+        /** 按区间读了多少字节 —— 定点读该是几百字节这个量级。 */
+        var rangeBytes = 0L
+            private set
+
+        fun resetReads() {
+            wholeQuestionReads = 0
+            rangeBytes = 0
+        }
+
         override val isPersistent: Boolean get() = delegate.isPersistent
 
-        override fun read(name: String): String? = delegate.read(name)
+        override fun read(name: String): String? {
+            if (name == questionFileOf("bench-bank")) wholeQuestionReads++
+            return delegate.read(name)
+        }
 
         override fun write(name: String, content: String) {
             writtenBytes += content.encodeToByteArray().size
@@ -300,6 +392,14 @@ class LargeBankTest {
         }
 
         override fun delete(name: String): Boolean = delegate.delete(name)
+
+        override fun byteLength(name: String): Long? = random.byteLength(name)
+
+        override fun readRange(name: String, offset: Long, length: Int): String? {
+            val text = random.readRange(name, offset, length)
+            if (text != null) rangeBytes += length
+            return text
+        }
     }
 
     // ---- 造数据 ----
@@ -343,6 +443,11 @@ class LargeBankTest {
                 .append('\n')
         }
         return builder.toString()
+    }
+
+    /** 收掉这一轮造出来的临时数据目录（失败了也不影响结论：它只是缓存）。 */
+    private fun cleanup(root: File) {
+        runCatching { root.deleteRecursively() }
     }
 
     private fun createTempDir(prefix: String): File {

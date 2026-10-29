@@ -10,6 +10,7 @@ import morefish.knowledge.trainer.application.port.AttemptRepository
 import morefish.knowledge.trainer.application.port.BankRepository
 import morefish.knowledge.trainer.application.port.GraphRepository
 import morefish.knowledge.trainer.application.port.QuestionLocation
+import morefish.knowledge.trainer.application.port.RandomAccessText
 import morefish.knowledge.trainer.application.port.TextStorage
 import morefish.knowledge.trainer.domain.graph.DependencyKind
 import morefish.knowledge.trainer.domain.graph.GraphEdge
@@ -72,6 +73,22 @@ internal fun questionFileOf(bankId: String): String {
 }
 
 /**
+ * 题目文件的旁注索引：每行「题号 \t 起始字节 \t 长度」。
+ *
+ * 它和题目文件放在同一个目录里，是**派生**的 —— 删了不影响数据正确性，
+ * 只影响下一次「取一道题」要不要把整份文件读一遍。没跟着一起生成的后果也一样：
+ * 校验不过就重建。刻意不用 JSON：一行三列、十万行，解析器越薄越好。
+ */
+internal fun indexFileOf(bankId: String): String =
+    questionFileOf(bankId).substringBeforeLast('/') + "/$INDEX_FILE_NAME"
+
+/**
+ * 索引的文件名。备份要按名字把它剔掉：它是**派生数据**，重建只要一次扫描，
+ * 打进备份只会在每个包里多塞一成体积，还让"恢复出来的索引"多一层没必要的信任。
+ */
+internal const val INDEX_FILE_NAME = "offsets-v1.tsv"
+
+/**
  * 题库仓储：目录 + 每库一个 NDJSON。
  *
  * 三个关键设计：
@@ -126,10 +143,11 @@ class JsonBankRepository(
      *
      * 与 [save] 的差别全在代价上。十万题的库上，`save(bank.copy(questions = +1))` 要
      * 先把整库读回来（解析 49.9MB、峰值 106MB）、再整份写回去；而这道题本身只有 512 字节。
-     * 这条路径只在"库里已有、id 不重复"时生效，两条前置检查都不解析整库：
+     * 这条路径只在"库里已有、id 不重复"时生效，两条前置检查都不碰题目文件：
      *
      * - 库在不在：只看目录；
-     * - id 重不重：扫一遍题目文件做子串预筛，**只解码命中的那几行**（不是整库解析）。
+     * - id 重不重：查旁注索引（见 [QuestionIndex]），十万题是一张 4MB 表的哈希查找；
+     *   没有索引能力（Web / 内存后端）或索引校验不过时才退回"读整份 + 子串预筛"。
      *
      * 剩下那一次整库解析只出现在"目录里的指纹还是首版算法"的老库上：新指纹要靠累加得到，
      * 而老值不能累加 —— 所以那种库第一次追加走一次整库重写（顺便把目录升到新版），之后就是增量。
@@ -137,12 +155,17 @@ class JsonBankRepository(
     override suspend fun addQuestion(bankId: String, question: Question): AddQuestionResult = mutex.withLock {
         val catalog = readCatalogLocked()
         val meta = catalog.firstOrNull { it.bankId == bankId } ?: return@withLock AddQuestionResult.BankMissing
+        val file = questionFileOf(bankId)
 
-        if (questionIdExistsLocked(questionFileOf(bankId), question.questionId)) {
-            return@withLock AddQuestionResult.DuplicateId
-        }
+        // 查重只看索引：十万题的库上，"这个 id 在不在"变成查一张 4MB 的旁注表，
+        // 而不是把 50MB 题目文件读回来扫一遍。索引不可用（Web/内存后端、或校验不过）时才退回扫描。
+        val index = indexForLocked(meta)
+        val duplicate = index?.contains(question.questionId)
+            ?: questionIdExistsLocked(file, question.questionId)
+        if (duplicate) return@withLock AddQuestionResult.DuplicateId
 
         val rest = catalog.filterNot { it.bankId == bankId }
+        val line = questionJson.encodeToString(QuestionDto.serializer(), question.toDto())
 
         if (meta.fingerprintVersion < Fingerprint.CURRENT_VERSION) {
             // 老库：必须看见全部题目才能把指纹换成新版。这一次整库重写是升级成本，不是日常成本。
@@ -159,10 +182,15 @@ class JsonBankRepository(
             return@withLock AddQuestionResult.Added
         }
 
-        storage.appendLine(
-            questionFileOf(bankId),
-            questionJson.encodeToString(QuestionDto.serializer(), question.toDto()),
-        )
+        // 先写题目行，再写索引行：崩在两步之间只会让索引**落后**（结构锁能发现并重建），
+        // 而不是让索引**超前**（那会指向一个还没写进来的位置）。
+        val length = lineByteLength(line)
+        val offset = index?.endOffset
+        storage.appendLine(file, line)
+        if (index != null && offset != null) {
+            storage.appendLine(indexFileOf(bankId), "${question.questionId}\t$offset\t$length")
+            index.add(question.questionId, length)
+        }
         val nextCount = meta.questionCount + 1
         writeCatalogLocked(rest + meta.copy(
             contentRevision = meta.contentRevision + 1,
@@ -187,48 +215,118 @@ class JsonBankRepository(
         val catalog = readCatalogLocked()
         if (catalog.none { it.bankId == bankId }) return@withLock false
         writeCatalogLocked(catalog.filterNot { it.bankId == bankId })
+        // 索引先删：题目文件删掉后父目录空了会被顺手收走，留着索引会让那次收尾落空。
+        storage.delete(indexFileOf(bankId))
         storage.delete(questionFileOf(bankId))
+        forgetIndexLocked(bankId)
         true
     }
 
     /**
-     * 精确定位：每个库只读一次文件，逐行找目标 id。
+     * 精确定位。
      *
-     * 关键在第二道过滤：解码之前先看这一行是否**真的**包含要找的 id。
-     * 十万题的库有十万行，而一次图谱刷新通常只查两三道题 ——
-     * 为了三行去解码十万行是纯浪费（整库解析要约 600ms，这里是一遍字符串扫描）。
+     * 有旁注索引时，这里读的是**那一道题的那一行**（几百字节），不是整份 50MB；
+     * 索引只有在通过 [QuestionIndex] 的三道锁之后才会被信任，否则这次查询老实扫一遍，
+     * 顺手把索引重建掉 —— 结果是"这次慢，下次不慢"，不是"快但可能错"。
+     *
+     * 没有随机读能力（Web / 内存后端）时，退化成"读整份 + 扫一遍"的老路径，行为不变。
      */
     override suspend fun locate(refs: List<QuestionRef>): Map<QuestionRef, QuestionLocation> {
         if (refs.isEmpty()) return emptyMap()
         return mutex.withLock {
-            val titles = readCatalogLocked().associate { it.bankId to it.title }
+            val metas = readCatalogLocked().associateBy { it.bankId }
             val found = mutableMapOf<QuestionRef, QuestionLocation>()
+            val random = storage as? RandomAccessText
 
             refs.groupBy { it.bankId }.forEach bankLoop@{ (bankId, wanted) ->
-                val title = titles[bankId] ?: return@bankLoop
-                val raw = storage.read(questionFileOf(bankId)) ?: return@bankLoop
+                val meta = metas[bankId] ?: return@bankLoop
                 val remaining = wanted.mapTo(mutableSetOf()) { it.questionId }
 
-                raw.lineSequence().forEach lineLoop@{ line ->
-                    if (remaining.isEmpty()) return@lineLoop
-                    if (remaining.none { line.contains("\"$it\"") }) return@lineLoop
-                    val dto = runCatching {
-                        questionJson.decodeFromString(QuestionDto.serializer(), line)
-                    }.getOrNull() ?: return@lineLoop
-                    if (dto.questionId !in remaining) return@lineLoop
-                    val question = dto.toDomain() ?: return@lineLoop
-                    found[QuestionRef(bankId, question.questionId)] = QuestionLocation(
-                        bankId = bankId,
-                        bankTitle = title,
-                        questionId = question.questionId,
-                        promptMarkdown = question.promptMarkdown,
-                        type = question.type,
-                        contentRevision = question.contentRevision,
-                    )
-                    remaining -= question.questionId
+                val index = if (random != null) indexForLocked(meta) else null
+                if (index != null && random != null) {
+                    val hits = mutableMapOf<QuestionRef, QuestionLocation>()
+                    var lied = false
+                    // 遍历副本：命中要从 remaining 里摘掉
+                    for (id in remaining.toList()) {
+                        when (val outcome = readAtLocked(random, meta, index, id)) {
+                            is IndexRead.Hit -> {
+                                hits[QuestionRef(bankId, id)] = outcome.location
+                                remaining -= id
+                            }
+                            // 索引过了结构锁与条数锁 = 它覆盖了文件的每一行；查不到就是真没有
+                            IndexRead.Absent -> remaining -= id
+                            IndexRead.Lie -> lied = true
+                        }
+                    }
+                    if (!lied) {
+                        found += hits
+                    } else {
+                        // 索引指错了行：这一库的结果全不作数，重建之后交给下面的扫描
+                        rebuildIndexLocked(meta)
+                    }
+                }
+
+                if (remaining.isNotEmpty()) {
+                    scanLocateLocked(meta, remaining, found)
                 }
             }
             found
+        }
+    }
+
+    /** 按索引读一行，并把"读到的到底是不是这一道题"核对掉。 */
+    private fun readAtLocked(
+        random: RandomAccessText,
+        meta: BankMetaDto,
+        index: QuestionIndex,
+        questionId: String,
+    ): IndexRead {
+        val entry = index.entry(questionId) ?: return IndexRead.Absent
+        val raw = random.readRange(questionFileOf(meta.bankId), entry.offset, entry.length)
+            ?: return IndexRead.Lie
+        val dto = runCatching {
+            questionJson.decodeFromString(QuestionDto.serializer(), raw.trim())
+        }.getOrNull() ?: return IndexRead.Lie
+        // 内容锁：偏移算错了会在这里露馅，而不是把别人的题当成这一道交出去
+        if (dto.questionId != questionId) return IndexRead.Lie
+        val question = dto.toDomain() ?: return IndexRead.Lie
+        return IndexRead.Hit(
+            QuestionLocation(
+                bankId = meta.bankId,
+                bankTitle = meta.title,
+                questionId = question.questionId,
+                promptMarkdown = question.promptMarkdown,
+                type = question.type,
+                contentRevision = question.contentRevision,
+            ),
+        )
+    }
+
+    /** 老实路径：读整份、逐行扫。解码之前先看这一行是否真的包含要找的 id。 */
+    private fun scanLocateLocked(
+        meta: BankMetaDto,
+        wanted: Set<String>,
+        found: MutableMap<QuestionRef, QuestionLocation>,
+    ) {
+        val remaining = wanted.toMutableSet()
+        val raw = storage.read(questionFileOf(meta.bankId)) ?: return
+        raw.lineSequence().forEach lineLoop@{ line ->
+            if (remaining.isEmpty()) return@lineLoop
+            if (remaining.none { line.contains("\"$it\"") }) return@lineLoop
+            val dto = runCatching {
+                questionJson.decodeFromString(QuestionDto.serializer(), line)
+            }.getOrNull() ?: return@lineLoop
+            if (dto.questionId !in remaining) return@lineLoop
+            val question = dto.toDomain() ?: return@lineLoop
+            found[QuestionRef(meta.bankId, question.questionId)] = QuestionLocation(
+                bankId = meta.bankId,
+                bankTitle = meta.title,
+                questionId = question.questionId,
+                promptMarkdown = question.promptMarkdown,
+                type = question.type,
+                contentRevision = question.contentRevision,
+            )
+            remaining -= question.questionId
         }
     }
 
@@ -362,6 +460,105 @@ class JsonBankRepository(
         }
     }
 
+    // ---- 索引 ----
+
+    /**
+     * 解析好的索引缓存。只留两个：真正同时在用的通常只有一个大库，
+     * 留两个是给"练习里跳到另一科的题"这种跨库操作一个余地，再多就只是占内存。
+     *
+     * 缓存不改变正确性：每次用之前都要过一遍结构锁（字节数）与条数锁，
+     * 所以别处（另一个进程、备份恢复）动过文件，这里不会拿着旧表照用。
+     */
+    private val indexCache = LinkedHashMap<String, QuestionIndex>()
+
+    private fun forgetIndexLocked(bankId: String) {
+        indexCache.remove(bankId)
+    }
+
+    private fun rememberIndexLocked(bankId: String, index: QuestionIndex) {
+        indexCache.remove(bankId)
+        indexCache[bankId] = index
+        while (indexCache.size > MAX_CACHED_INDEXES) {
+            val eldest = indexCache.keys.first()
+            indexCache.remove(eldest)
+        }
+    }
+
+    /**
+     * 取这个库的索引：内存里有一份就用它，文件里有一份就解析它，都没有（或都对不上）就重建。
+     *
+     * 三道锁在 [QuestionIndex] 里解释过。这里落实的是其中两道 ——
+     * **结构锁**（最后一条的结束位置 = 题目文件字节长度）与**条数锁**（条数 = 目录题数）。
+     * 第三道内容锁在真正读题时逐条核对，因为它要等读回来才看得见。
+     */
+    private fun indexForLocked(meta: BankMetaDto): QuestionIndex? {
+        val random = storage as? RandomAccessText ?: return null
+        val fileBytes = random.byteLength(questionFileOf(meta.bankId)) ?: return null
+
+        indexCache[meta.bankId]?.let { cached ->
+            if (cached.endOffset == fileBytes && cached.count == meta.questionCount) return cached
+            indexCache.remove(meta.bankId)
+        }
+
+        val parsed = storage.read(indexFileOf(meta.bankId))?.let { QuestionIndex.parse(it) }
+        if (parsed != null && parsed.endOffset == fileBytes && parsed.count == meta.questionCount) {
+            rememberIndexLocked(meta.bankId, parsed)
+            return parsed
+        }
+        return rebuildIndexLocked(meta)
+    }
+
+    /**
+     * 从题目文件重新扫一遍，重建索引并落盘。
+     *
+     * 只在三种情况下发生：第一次用新版本打开老库、索引文件丢了、索引与文件对不上。
+     * 都是**一次性**成本（十万题约一次整份读），重建之后回到 O(1)。
+     *
+     * 题号用"行首的 questionId 字段"直接取，取不到才退回整行解码：
+     * 我们是按 DTO 顺序写出去的，正常情况下第一个字段就是它；
+     * 但外面手工改过的文件字段顺序可能不同，那时不能猜，老实解析。
+     */
+    private fun rebuildIndexLocked(meta: BankMetaDto): QuestionIndex? {
+        val raw = storage.read(questionFileOf(meta.bankId)) ?: return null
+        val index = QuestionIndex.empty()
+
+        var start = 0
+        while (start < raw.length) {
+            val newline = raw.indexOf('\n', start)
+            val end = if (newline < 0) raw.length else newline
+            val segment = raw.substring(start, end)
+            // 长度按**实际字节**算：汉字三字节，按字符算会让后面每一个偏移都错位
+            val length = segment.encodeToByteArray().size + if (newline < 0) 0 else 1
+            val id = if (segment.isBlank()) null else questionIdOfLine(segment)
+            if (id != null) index.add(id, length) else index.skip(length)
+            start = if (newline < 0) raw.length else newline + 1
+        }
+
+        // 条数对不上说明有行读不懂（损坏行）。这时把表写下去只会让下一次又对不上：
+        // 内存里这份仍可用于本次查询，但不落盘、不进缓存。
+        if (index.count == meta.questionCount) {
+            storage.write(indexFileOf(meta.bankId), index.render())
+            rememberIndexLocked(meta.bankId, index)
+        }
+        return index
+    }
+
+    /** 从一行题目里取题号：优先走"行首字段"这条快路，取不到才解析整行。 */
+    private fun questionIdOfLine(line: String): String? {
+        val marker = "{\"questionId\":\""
+        if (line.startsWith(marker)) {
+            val close = line.indexOf('"', marker.length)
+            if (close > marker.length) {
+                val raw = line.substring(marker.length, close)
+                // 带转义的值不能直接当题号用（`\"` 之后才是值的结尾），交给解码器
+                if (raw.none { it == '\\' }) return raw
+            }
+        }
+        return runCatching {
+            questionJson.decodeFromString(QuestionDto.serializer(), line).questionId
+        }.getOrNull()
+    }
+
     /**
      * 返回实际写入的条数、题型分布与**内容指纹**；这三个值随后进目录。
      *
@@ -375,21 +572,31 @@ class JsonBankRepository(
      */
     private fun writeQuestionsLocked(bankId: String, questions: List<Question>): WrittenQuestions {
         val builder = StringBuilder()
+        val index = QuestionIndexBuilder()
         val counts = mutableMapOf<String, Int>()
         val fingerprint = Fingerprint.Accumulator()
         var written = 0
         questions.forEach { question ->
-            builder.append(questionJson.encodeToString(QuestionDto.serializer(), question.toDto())).append('\n')
+            val line = questionJson.encodeToString(QuestionDto.serializer(), question.toDto())
+            index.append(question.questionId, lineByteLength(line))
+            builder.append(line).append('\n')
             fingerprint.add(question.contentFingerprint())
             counts[question.type.wireName] = (counts[question.type.wireName] ?: 0) + 1
             written++
         }
+        // 题目文件先落盘，索引后写：反过来的话，崩在中间会留下"索引比文件长"，
+        // 结构锁同样能发现，但先写内容更符合"文件是本体、索引是旁注"的次序。
         storage.write(questionFileOf(bankId), builder.toString())
-        return WrittenQuestions(written, counts, fingerprint.value(), Fingerprint.CURRENT_VERSION)
+        storage.write(indexFileOf(bankId), index.build())
+        forgetIndexLocked(bankId)
+        return WrittenQuestions(written, counts, fingerprint.value(), Fingerprint.CURRENT_VERSION, index.endOffset)
     }
 
     private companion object {
         const val CATALOG_SCHEMA_VERSION = 2
+
+        /** 内存里最多留几份解析好的索引（一份十万题的索引约 6MB）。 */
+        const val MAX_CACHED_INDEXES = 2
     }
 }
 
@@ -467,6 +674,19 @@ class JsonAttemptRepository(
     }
 }
 
+/**
+ * 按索引读一道题的结果。
+ *
+ * 分「没有」「读到了」「索引在撒谎」三种，是因为它们该有完全不同的后续动作：
+ * 没有 = 这道题真的不在了（正常）；读到了 = 收工；撒谎 = 这张表不能再用，
+ * 要重建并退回扫描 —— 而不是把它当成"没有"悄悄咽下去。
+ */
+private sealed interface IndexRead {
+    class Hit(val location: QuestionLocation) : IndexRead
+    data object Absent : IndexRead
+    data object Lie : IndexRead
+}
+
 /** [JsonBankRepository.writeQuestionsLocked] 的产物：目录里那三个"必须等于实际内容"的字段。 */
 internal class WrittenQuestions(
     val count: Int,
@@ -474,6 +694,8 @@ internal class WrittenQuestions(
     val fingerprint: String,
     /** 这串指纹是按哪一版算法算的，一起写进目录。 */
     val fingerprintVersion: Int,
+    /** 题目文件写完有多少字节 —— 索引的结构锁要拿它对，测试也用它核对布局。 */
+    val fileBytes: Long,
 )
 
 private fun QuestionBank.toMeta(written: WrittenQuestions): BankMetaDto = BankMetaDto(

@@ -237,6 +237,27 @@ interface TextStorage {
     fun delete(name: String): Boolean
 }
 
+/**
+ * 「只读一段」的能力（可选）。
+ *
+ * [TextStorage] 只会整份读、整份写，于是"取一道题"在十万题的库上要读 50MB 再逐行扫。
+ * 真正让这件事变便宜的只有一件事：知道该读哪几个字节。这个端口就是那个能力本身 ——
+ * 它不规定索引怎么存、存在哪，只规定「给定字节区间，把那段文字还回来」。
+ *
+ * 偏移是 **UTF-8 字节**，不是字符：文件是 UTF-8，一个汉字三字节。切在行中间会得到
+ * 半个字（解码成替换符），所以调用方只该拿它来读整行 —— 行边界由写索引那一侧记录。
+ *
+ * 只有真文件后端实现得了；内存后端本来就整份在手里，没有"读一部分"这回事，
+ * 也不该假装有。拿不到这个能力时，上层退回整份读 + 扫描，结果一样、只是慢。
+ */
+interface RandomAccessText {
+    /** 文件有多少字节；不存在返回 null。 */
+    fun byteLength(name: String): Long?
+
+    /** 从第 [offset] 个字节起读 [length] 个；越界或文件不在返回 null。 */
+    fun readRange(name: String, offset: Long, length: Int): String?
+}
+
 class InMemoryTextStorage : TextStorage {
     private val files = mutableMapOf<String, StringBuilder>()
 

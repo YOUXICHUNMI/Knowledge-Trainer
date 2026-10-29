@@ -1,7 +1,9 @@
 package morefish.knowledge.trainer.infrastructure.storage
 
+import morefish.knowledge.trainer.application.port.RandomAccessText
 import morefish.knowledge.trainer.application.port.TextStorage
 import java.io.File
+import java.io.RandomAccessFile
 
 /**
  * 基于文件系统的文本存储（桌面端）。
@@ -9,7 +11,7 @@ import java.io.File
  * 写入先落到 .tmp 再重命名，避免进程被杀时留下半截 JSON
  * 导致下次启动读不出题库。历史文件是追加写，天然只增不改。
  */
-class FileTextStorage(private val root: File) : TextStorage {
+class FileTextStorage(private val root: File) : TextStorage, RandomAccessText {
 
     override val isPersistent: Boolean = true
 
@@ -57,4 +59,31 @@ class FileTextStorage(private val root: File) : TextStorage {
     }
 
     private fun file(name: String): File = File(root, name)
+
+    /**
+     * 字节长度。用 `File.length()` 而不是"读出来量字符串长度"：后者为了知道
+     * 一份 50MB 文件有多长，要把它整个读进内存 —— 那正是这个方法要避免的事。
+     */
+    override fun byteLength(name: String): Long? {
+        val target = file(name)
+        return if (target.isFile) target.length() else null
+    }
+
+    /**
+     * 读一段。每次开一次文件句柄：一次图谱刷新只取两三道题，
+     * 为此常驻一个未关闭的句柄（还要处理并发与关闭时机）不划算。
+     */
+    override fun readRange(name: String, offset: Long, length: Int): String? {
+        val target = file(name)
+        if (!target.isFile || offset < 0 || length <= 0) return null
+        return runCatching {
+            RandomAccessFile(target, "r").use { raf ->
+                if (offset + length > raf.length()) return@use null
+                val bytes = ByteArray(length)
+                raf.seek(offset)
+                raf.readFully(bytes)
+                bytes.decodeToString()
+            }
+        }.getOrNull()
+    }
 }
