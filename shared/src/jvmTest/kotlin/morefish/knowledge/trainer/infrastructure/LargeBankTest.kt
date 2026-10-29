@@ -130,6 +130,9 @@ class LargeBankTest {
         val again = JsonBankRepository(storage)
         assertEquals(2, again.list().single().questionCount)
         assertTrue(again.loadWarnings.isEmpty())
+
+        // 这条用例一直漏了收尾：每跑一次留一个空目录，攒着看像"数据在长"
+        cleanup(root)
     }
 
     /**
