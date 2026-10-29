@@ -1,6 +1,7 @@
 package morefish.knowledge.trainer.infrastructure.storage
 
 import morefish.knowledge.trainer.application.port.RandomAccessText
+import morefish.knowledge.trainer.application.port.TextSpan
 import morefish.knowledge.trainer.application.port.TextStorage
 import java.io.File
 import java.io.RandomAccessFile
@@ -66,5 +67,61 @@ class FileTextStorage(private val root: File) : TextStorage, RandomAccessText {
                 bytes.decodeToString()
             }
         }.getOrNull()
+    }
+
+    /**
+     * 与桌面端同一套语义：整批共用一个文件句柄，挨得近的几段并成一次读。
+     * 手机上 open/close 比读几百字节贵得多 —— 这正是搜索复核候选时的主要开销。
+     * 阈值与桌面端同值（4KB），改动时两边要一起改。
+     */
+    override fun readSpans(name: String, spans: List<TextSpan>): List<String?> {
+        if (spans.isEmpty()) return emptyList()
+        val target = File(root, name)
+        if (!target.isFile) return List(spans.size) { null }
+        val out = runCatching {
+            RandomAccessFile(target, "r").use { raf ->
+                val fileBytes = raf.length()
+                val texts = arrayOfNulls<String>(spans.size)
+                var i = 0
+                while (i < spans.size) {
+                    val head = spans[i]
+                    if (!fitsIn(head, fileBytes)) {
+                        i++
+                        continue
+                    }
+                    val blockStart = head.offset
+                    var blockEnd = head.offset + head.length
+                    var last = i
+                    var next = i + 1
+                    while (next < spans.size) {
+                        val span = spans[next]
+                        if (!fitsIn(span, fileBytes) || span.offset > blockEnd + SPAN_MERGE_GAP) break
+                        if (span.offset + span.length > blockEnd) blockEnd = span.offset + span.length
+                        last = next
+                        next++
+                    }
+                    val block = ByteArray((blockEnd - blockStart).toInt())
+                    raf.seek(blockStart)
+                    raf.readFully(block)
+                    for (k in i..last) {
+                        val span = spans[k]
+                        if (!fitsIn(span, fileBytes)) continue
+                        val from = (span.offset - blockStart).toInt()
+                        texts[k] = block.decodeToString(from, from + span.length)
+                    }
+                    i = last + 1
+                }
+                texts.toList()
+            }
+        }.getOrNull()
+        return out ?: List(spans.size) { null }
+    }
+
+    private fun fitsIn(span: TextSpan, fileBytes: Long): Boolean =
+        span.offset >= 0 && span.length > 0 && span.offset + span.length <= fileBytes
+
+    private companion object {
+        /** 与桌面端同值：两段之间隔不超过 4KB 就并成一次读。 */
+        const val SPAN_MERGE_GAP = 4 * 1024
     }
 }

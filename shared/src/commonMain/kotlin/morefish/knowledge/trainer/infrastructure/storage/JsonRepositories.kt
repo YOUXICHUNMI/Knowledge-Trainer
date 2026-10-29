@@ -11,6 +11,7 @@ import morefish.knowledge.trainer.application.port.BankRepository
 import morefish.knowledge.trainer.application.port.GraphRepository
 import morefish.knowledge.trainer.application.port.QuestionLocation
 import morefish.knowledge.trainer.application.port.RandomAccessText
+import morefish.knowledge.trainer.application.port.TextSpan
 import morefish.knowledge.trainer.application.port.TextStorage
 import morefish.knowledge.trainer.domain.graph.DependencyKind
 import morefish.knowledge.trainer.domain.graph.GraphEdge
@@ -736,23 +737,67 @@ class JsonBankRepository(
         return rows
     }
 
-    /** 读回某一行的题目并核对内容；对不上就是"这一行不是答案"，不是"索引坏了"。 */
-    private fun searchRowLocked(
+    /**
+     * 分批把候选行读回来复核，返回添了几条。
+     *
+     * 为什么要分批而不是逐行读：一段就是一行，逐行就是**一行开一次文件**。
+     * 十万题的库上"第 100000 题"有几百个候选 —— 几百次 `open/seek/read/close`
+     * 里，读的那点字节（一百多 KB）反而是小头，开销全在开关上。
+     * 整批共用一个句柄之后（[RandomAccessText.readSpans]），这笔开销按批摊。
+     *
+     * 为什么还要分批而不是一次全读：得保住"凑够上限就停"。候选十万行、只要 5 条时，
+     * 一次全读会把 10MB 拉进来。批次就是"停车距离"—— 最坏比上限多读
+     * [SEARCH_VERIFY_BATCH] - 1 行（几十 KB），而一次打开能摊到这几百行上。
+     *
+     * 顺序没变：批内仍按行号升序复核，命中就按这个顺序进结果。
+     */
+    private fun searchRowsLocked(
         random: RandomAccessText,
         meta: BankMetaDto,
         qIndex: QuestionIndex,
         fileBytes: Long,
-        row: Int,
+        rows: IntArray,
+        segments: List<String>,
+        room: Int,
+        hits: MutableList<QuestionLocation>,
+    ): Int {
+        if (room <= 0 || rows.isEmpty()) return 0
+        val file = questionFileOf(meta.bankId)
+        var added = 0
+        var cursor = 0
+        while (cursor < rows.size && added < room) {
+            val stop = minOf(cursor + SEARCH_VERIFY_BATCH, rows.size)
+            val spans = ArrayList<TextSpan>(stop - cursor)
+            for (k in cursor until stop) {
+                val entry = qIndex.at(rows[k]) ?: continue
+                // 就按索引里记的长度读：它和行号是同一次扫描算出来的，本来就是精确值。
+                // 早先版本多读 2KB 兜底，实测多花的字节数占搜索总读取量的四分之三 ——
+                // 而"兜底"能挡的那种情况（长度偏小）会在这里解码失败、跳过这一行，
+                // 结果是少一条命中，不是给出错答案。
+                val window = minOf(entry.length.toLong(), SEARCH_READ_MAX.toLong(), fileBytes - entry.offset).toInt()
+                if (window <= 0) continue
+                spans += TextSpan(entry.offset, window)
+            }
+            val texts = if (spans.isEmpty()) emptyList() else random.readSpans(file, spans)
+            for (text in texts) {
+                if (added >= room) break
+                val location = locationOfLocked(meta, text, segments) ?: continue
+                hits += location
+                added++
+            }
+            cursor = stop
+        }
+        return added
+    }
+
+    /** 把读回来的一段文本变成一道题；读不懂、不成形、不命中都是 null（不是"索引坏了"）。 */
+    private fun locationOfLocked(
+        meta: BankMetaDto,
+        raw: String?,
         segments: List<String>,
     ): QuestionLocation? {
-        val entry = qIndex.at(row) ?: return null
-        // 就按索引里记的长度读：它和行号是同一次扫描算出来的，本来就是精确值。
-        // 早先版本多读 2KB 兜底，实测多花的字节数占搜索总读取量的四分之三 ——
-        // 而"兜底"能挡的那种情况（长度偏小）会在这里解码失败、跳过这一行，
-        // 结果是少一条命中，不是给出错答案。
-        val window = minOf(entry.length.toLong(), SEARCH_READ_MAX.toLong(), fileBytes - entry.offset).toInt()
-        if (window <= 0) return null
-        val raw = random.readRange(questionFileOf(meta.bankId), entry.offset, window) ?: return null
+        if (raw == null) return null
+        // 窗口可能跨到下一行（长度被 SEARCH_READ_MAX 截过），只认第一行
         val line = raw.substringBefore('\n')
         val dto = runCatching {
             questionJson.decodeFromString(QuestionDto.serializer(), line)
@@ -818,22 +863,14 @@ class JsonBankRepository(
 
         val fileBytes = random.byteLength(questionFileOf(meta.bankId)) ?: return
 
-        var added = 0
-        // 主索引的候选是升序的；尾巴的行号天然更大，接着往后走就是全序，不必排序
-        for (row in search.candidates(terms)) {
-            if (added >= room) return
-            val location = searchRowLocked(random, meta, qIndex, fileBytes, row, segments) ?: continue
-            hits += location
-            added++
-        }
-        var lastRow = -1
-        for (row in tailRowsLocked(meta, terms)) {
-            if (added >= room) return
-            if (row <= lastRow) continue
-            lastRow = row
-            val location = searchRowLocked(random, meta, qIndex, fileBytes, row, segments) ?: continue
-            hits += location
-            added++
+        // 主索引的候选是升序的；尾巴的行号天然更大（都 ≥ slots），接着往后走就是全序，不必排序
+        var added = searchRowsLocked(
+            random, meta, qIndex, fileBytes, search.candidates(terms), segments, room, hits,
+        )
+        if (added < room) {
+            added += searchRowsLocked(
+                random, meta, qIndex, fileBytes, tailRowsLocked(meta, terms).toIntArray(), segments, room - added, hits,
+            )
         }
     }
 
@@ -887,6 +924,14 @@ class JsonBankRepository(
 
         /** 单行最多读这么远 —— 再长就不是题库，是别的东西混进来了。 */
         const val SEARCH_READ_MAX = 256 * 1024
+
+        /**
+         * 一次向存储要多少行来复核。
+         *
+         * 这是"停车距离"：太大则凑够上限之后白读（候选十万行、只要 5 条时会拉进几百 KB），
+         * 太小则一次文件打开摊不开。64 行 × 约 500 字节 ≈ 32KB 一批。
+         */
+        const val SEARCH_VERIFY_BATCH = 64
     }
 }
 

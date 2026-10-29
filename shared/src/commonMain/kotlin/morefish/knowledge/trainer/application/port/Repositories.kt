@@ -256,7 +256,27 @@ interface RandomAccessText {
 
     /** 从第 [offset] 个字节起读 [length] 个；越界或文件不在返回 null。 */
     fun readRange(name: String, offset: Long, length: Int): String?
+
+    /**
+     * 一次读多段：结果按下标与 [spans] 对齐，读不到的那一段是 null。
+     *
+     * 为什么端口上要有这一条：`readRange` 一次开一次文件。搜索复核候选时"一段 = 一行"，
+     * 几百个候选就是几百次 `open/seek/read/close` —— 在 Windows 上，这几百次开关
+     * 比要读的那一百多 KB 还贵。整批共用一个句柄之后，这笔开销按批摊。
+     *
+     * 默认实现就是逐个 [readRange]：结果一样，只是多开几次。内存后端不必假装拥有
+     * "批量"这回事，它本来就没有句柄。真文件后端可以假设 [spans] 大致递增、
+     * 把挨得近的几段并成一次读 —— 但返回结果必须严格按下标对应，
+     * 调用方不关心实现是怎么读的。
+     */
+    fun readSpans(name: String, spans: List<TextSpan>): List<String?> {
+        if (spans.isEmpty()) return emptyList()
+        return spans.map { readRange(name, it.offset, it.length) }
+    }
 }
+
+/** 一段要读的字节区间：[offset] 起、[length] 字节。就是 [RandomAccessText.readRange] 的两个参数。 */
+data class TextSpan(val offset: Long, val length: Int)
 
 class InMemoryTextStorage : TextStorage {
     private val files = mutableMapOf<String, StringBuilder>()

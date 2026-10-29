@@ -2,6 +2,7 @@ package morefish.knowledge.trainer.infrastructure
 
 import kotlinx.coroutines.test.runTest
 import morefish.knowledge.trainer.application.port.RandomAccessText
+import morefish.knowledge.trainer.application.port.TextSpan
 import morefish.knowledge.trainer.application.port.TextStorage
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
@@ -107,6 +108,31 @@ class SearchIndexTest {
         assertEquals("q-37", hits.single().questionId)
         assertEquals(0, storage.wholeQuestionReads, "走索引的搜索不该把整份题目文件读回来")
         assertTrue(storage.rangeBytes > 0, "该读回候选那一行来复核")
+    }
+
+    /**
+     * 复核候选不能"一行开一次文件"。
+     *
+     * 两百个候选逐个读，就是两百次 `open/close` —— 比要读的那一百多 KB 贵得多。
+     * 判据用是非量而不是耗时：单段读的次数必须是 0（走了批量），整批读的次数得是"几次"
+     * 而不是"两百次"。把它们改回逐行读，第一条立刻变 200。
+     */
+    @Test
+    fun verifyingManyCandidatesReadsThemInBatchesNotOneOpenPerLine() = runTest {
+        val storage = RecordingStorage()
+        JsonBankRepository(storage).save(bank(200))
+        val repository = JsonBankRepository(storage)
+
+        storage.resetReads()
+        val hits = repository.searchQuestions("以下说法", 200)
+
+        assertEquals(200, hits.size, "上限 200 就该拿到 200 条")
+        assertEquals(0, storage.rangeReads, "候选复核不该一行开一次文件")
+        assertTrue(
+            storage.spanBatches in 1..4,
+            "200 个候选该在不超过 4 次批量读里读完，实际 ${storage.spanBatches} 次",
+        )
+        assertTrue(storage.rangeBytes > 0, "该把候选行真读回来复核")
     }
 
     @Test
@@ -258,9 +284,19 @@ class SearchIndexTest {
         var rangeBytes = 0L
             private set
 
+        /** 单段读过几次 —— 搜索复核候选不该走这条路（一次 = 开一次文件）。 */
+        var rangeReads = 0
+            private set
+
+        /** 整批读过几次。 */
+        var spanBatches = 0
+            private set
+
         fun resetReads() {
             wholeQuestionReads = 0
             rangeBytes = 0
+            rangeReads = 0
+            spanBatches = 0
         }
 
         override val isPersistent: Boolean = false
@@ -286,10 +322,24 @@ class SearchIndexTest {
         override fun byteLength(name: String): Long? = files[name]?.size?.toLong()
 
         override fun readRange(name: String, offset: Long, length: Int): String? {
+            rangeReads++
             val bytes = files[name] ?: return null
             if (offset < 0 || length <= 0 || offset + length > bytes.size) return null
             rangeBytes += length
             return bytes.copyOfRange(offset.toInt(), (offset + length).toInt()).decodeToString()
+        }
+
+        override fun readSpans(name: String, spans: List<TextSpan>): List<String?> {
+            spanBatches++
+            val bytes = files[name] ?: return List(spans.size) { null }
+            return spans.map { span ->
+                if (span.offset < 0 || span.length <= 0 || span.offset + span.length > bytes.size) {
+                    null
+                } else {
+                    rangeBytes += span.length
+                    bytes.copyOfRange(span.offset.toInt(), (span.offset + span.length).toInt()).decodeToString()
+                }
+            }
         }
     }
 }

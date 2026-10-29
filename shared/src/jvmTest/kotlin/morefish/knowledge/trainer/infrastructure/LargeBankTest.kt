@@ -3,6 +3,7 @@ package morefish.knowledge.trainer.infrastructure
 import kotlinx.coroutines.test.runTest
 import morefish.knowledge.trainer.application.port.AddQuestionResult
 import morefish.knowledge.trainer.application.port.RandomAccessText
+import morefish.knowledge.trainer.application.port.TextSpan
 import morefish.knowledge.trainer.application.port.TextStorage
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.Fingerprint
@@ -197,6 +198,13 @@ class LargeBankTest {
         mark.record("搜题干·之后（只读候选行）", searchStorage.rangeBytes)
         assertEquals(1, hits.size, "只该命中最后一道题：${hits.map { it.questionId }}")
         assertEquals(0, searchStorage.wholeQuestionReads, "走倒排表的搜索不该把整份题目文件读回来")
+        // 候选复核是成批读的：一行一次 open 在这台机器上就是几十毫秒
+        assertEquals(0, searchStorage.rangeReads, "复核候选不该一行开一次文件")
+        println(
+            "搜一个词：候选 ${searchStorage.spansRead} 行 / 读盘 ${searchStorage.spanBatches} 次" +
+                "（每次摊 ${searchStorage.spansRead / maxOf(1, searchStorage.spanBatches)} 行），" +
+                "共 ${searchStorage.rangeBytes} 字节",
+        )
 
         // 2c) 最坏情况：查询词几乎每道题都有（"以下说法"），候选是整库
         val commonHits = searchRepo.searchQuestions("以下说法", 5)
@@ -391,9 +399,24 @@ class LargeBankTest {
         var rangeBytes = 0L
             private set
 
+        /** 单段读过几次 —— 搜索复核候选不该走这条路（一次 = 开一次文件）。 */
+        var rangeReads = 0
+            private set
+
+        /** 整批读过几次（每次 = 开一次文件）。 */
+        var spanBatches = 0
+            private set
+
+        /** 一整批里合起来要了几段 —— 与 [spanBatches] 一起说明"每次开文件摊了几行"。 */
+        var spansRead = 0
+            private set
+
         fun resetReads() {
             wholeQuestionReads = 0
             rangeBytes = 0
+            rangeReads = 0
+            spanBatches = 0
+            spansRead = 0
         }
 
         override val isPersistent: Boolean get() = delegate.isPersistent
@@ -418,9 +441,19 @@ class LargeBankTest {
         override fun byteLength(name: String): Long? = random.byteLength(name)
 
         override fun readRange(name: String, offset: Long, length: Int): String? {
+            rangeReads++
             val text = random.readRange(name, offset, length)
             if (text != null) rangeBytes += length
             return text
+        }
+
+        override fun readSpans(name: String, spans: List<TextSpan>): List<String?> {
+            if (spans.isEmpty()) return emptyList()
+            spanBatches++
+            spansRead += spans.size
+            val texts = random.readSpans(name, spans)
+            spans.forEachIndexed { i, span -> if (texts[i] != null) rangeBytes += span.length }
+            return texts
         }
     }
 
