@@ -89,7 +89,7 @@ private fun StandardBody() {
 
     StaggeredAppear(BankStandardDocs.sections.size) {
         Panel(background = Palette.PanelMuted) {
-            SectionTitle("当前实现到哪一步", hint = "计划不当作已完成")
+            SectionTitle("当前实现到哪一步", hint = "两个方向都要如实")
             Spacer(Modifier.height(8.dp))
             BankStandardDocs.implementationNotes.forEach { Bullet(it) }
         }

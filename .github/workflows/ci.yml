@@ -2,7 +2,7 @@ name: CI
 
 # 四档：
 #   push / PR        → 必跑：Python 工具链全量回归 + Kotlin 全量单测
-#   push 到主分支    → 加跑：74 张页面截图（产物是人要去看的图，不压在每个 PR 上）
+#   push 到主分支    → 加跑：76 张页面截图（产物是人要去看的图，不压在每个 PR 上）
 #   workflow_dispatch → 额外跑 Android 与 Windows 桌面打包（慢，按需）
 #
 # 为什么 Android 与桌面打包不放进必跑：两者都要拉 SDK / WiX，单次十几分钟，
@@ -98,7 +98,7 @@ jobs:
           if-no-files-found: warn
 
   # ------------------------------------------------------------------ 截图
-  # 74 张页面图的离屏渲染，外加"深色页某块还是浅色"的像素断言。
+  # 76 张页面图的离屏渲染，外加"深色页某块还是浅色"的像素断言。
   # 本地对应的命令是同一条：`KT_SHOTS=1 ./gradlew :shared:jvmTest --tests "*ScreenshotTest*"`。
   screenshots:
     name: 页面截图（离屏渲染）
@@ -111,7 +111,7 @@ jobs:
       # 卡死张数是有原因的：`--tests` 过滤写错、KT_SHOTS 没生效、测试结果命中缓存，
       # 这三种情况都会让"一张图都没渲染"的 job 变成绿的。用例总数会骗人，文件数不会。
       # 新增或删掉截图时同步改这里（docs 里也写着这个数字）。
-      EXPECTED_SHOTS: "74"
+      EXPECTED_SHOTS: "76"
     steps:
       - uses: actions/checkout@v4
 

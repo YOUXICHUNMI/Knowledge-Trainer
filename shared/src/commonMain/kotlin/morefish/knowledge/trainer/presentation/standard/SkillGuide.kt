@@ -39,6 +39,14 @@ object SkillGuide {
             purpose = "validate / inspect / unpack / digest 四个子命令",
             missingConsequence = "AI 没能力自证「已通过检查」，只能声称，不可信",
         ),
+        // 这一条是补上的：上面两个脚本各自只有一行 import，真正干活的全在这里。
+        // 以前清单里没有它，照着清单挑文件给 AI 的话，两个脚本一跑就 ModuleNotFoundError，
+        // 而现象是"AI 说打包失败"，看不出是清单漏了文件。
+        Bundle(
+            path = "scripts/ktqbf/",
+            purpose = "上面两个入口的实现：打包、校验、Schema 子集检查、答案哈希、指纹、媒体与增强资料",
+            missingConsequence = "两个脚本一运行就 ModuleNotFoundError —— 入口只有一行导入，实现在这里",
+        ),
         Bundle(
             path = "scripts/tests/run_bad_packages.py",
             purpose = "40 条坏包回归，确认改坏了会 fail-closed",
@@ -56,7 +64,7 @@ object SkillGuide {
         appendLine("我要给 Knowledge Trainer 做一个 KT-QBF 1.0 题库包（.qbank）。")
         appendLine()
         appendLine("规则：")
-        appendLine("1. 先读 skills/qbank-authoring/SKILL.md，再读 references/KT-QBF-1.0.md 和 references/ 下全部 schema。")
+        appendLine("1. 先读我给你的 SKILL.md（在这份 Skill 的根目录），再读 references/KT-QBF-1.0.md 和 references/ 下全部 schema。")
         appendLine("2. 我的资料在 [换成你的笔记 / 文件]。只使用原文能确认的知识点；原文没写答案的题，不要编答案。")
         appendLine("3. 语言 [简体中文]；题型 [可以客观确认的单选 / 多选分别生成原生题型]；保留 Markdown 和 LaTeX。")
         appendLine("4. 作者署名 [你的昵称]，公开邮箱 [你的公开邮箱，不想公开就写 none]。")
@@ -68,12 +76,12 @@ object SkillGuide {
         appendLine("请直接说「未生成真实包 / 未验证」，并把源文件全文给我，我自己在本地打包。")
     }
 
-    /** 用户拿到包之后，如何在没有 Python 的环境里自己复核。 */
+    /** 用户拿到包之后，如何自己复核（命令都在 Skill 目录里执行）。 */
     val verifyHints: List<String> = listOf(
-        "命令行：python tools/qbank/validate_qbank.py validate your.qbank",
-        "只想看结构不解压：python tools/qbank/validate_qbank.py inspect your.qbank",
-        "核对规范化 digest：python tools/qbank/validate_qbank.py digest your.qbank",
-        "把包安全解出来看原文：python tools/qbank/validate_qbank.py unpack your.qbank ./out",
+        "命令行：python scripts/validate_qbank.py validate your.qbank",
+        "只想看结构不解压：python scripts/validate_qbank.py inspect your.qbank",
+        "核对规范化 digest：python scripts/validate_qbank.py digest your.qbank",
+        "把包安全解出来看原文：python scripts/validate_qbank.py unpack your.qbank ./out",
         "导入 App：首页 → 导入题库 → 「选择 .qbank 文件」（桌面端已接入文件选择器；其他平台会明确提示不可用，不假装支持）。",
         "校验器 fail-closed：报错就说明这个包真的不能用，不要尝试「忽略错误继续导入」。",
     )

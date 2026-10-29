@@ -131,6 +131,12 @@ class ScreenshotTest {
             controller.openStandard(Screen.STANDARD, Screen.IMPORT)
             AppContent(controller)
         }
+        // Skill 页一直没被截图覆盖过，而它是"把哪些文件交给 AI"的唯一说明 ——
+        // 清单漏过一条（scripts/ktqbf/），页面看着一切正常，没人发现。
+        shot("09b-skill", height = 1900) {
+            controller.openStandard(Screen.SKILL, Screen.IMPORT)
+            AppContent(controller)
+        }
         shot("12-question-editor") {
             controller.openQuestionEditor(controller.banks.single().bankId)
             AppContent(controller)
@@ -1435,6 +1441,11 @@ class ScreenshotTest {
 
         shot("70-standard-dark", height = 1180) {
             controller.openStandard(Screen.STANDARD, Screen.IMPORT)
+            AppContent(controller)
+        }
+
+        shot("70b-skill-dark", height = 1900) {
+            controller.openStandard(Screen.SKILL, Screen.IMPORT)
             AppContent(controller)
         }
 
