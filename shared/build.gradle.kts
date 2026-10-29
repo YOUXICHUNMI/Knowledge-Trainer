@@ -97,4 +97,11 @@ dependencies {
 tasks.withType<Test>().configureEach {
     System.getenv("KT_BENCH")?.let { environment("KT_BENCH", it) }
     maxHeapSize = "2g"
+    // 有几个用例直接读仓库里的 .qbank（真实题库 / 示例题库），而 Gradle 看不见它们：
+    // 只改包、不改 Kotlin 源码时 jvmTest 会被判成 UP-TO-DATE 直接跳过 ——
+    // "全绿"其实是一次都没跑。把包登记成输入，包一变就重跑。
+    inputs.files(
+        rootProject.fileTree("tools/qbank/examples") { include("*.qbank") },
+        rootProject.fileTree("banks") { include("*.qbank") },
+    ).withPropertyName("bankFixtures").optional()
 }

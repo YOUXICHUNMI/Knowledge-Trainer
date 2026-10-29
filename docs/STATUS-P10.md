@@ -975,6 +975,70 @@ from ktqbf.builder import main
 这一节的教训可以一句话说完：**"还没做"是一种需要维护的声明，和"已做"一样会过期**，
 而且过期时没有任何东西会报错 —— 所以两边的守卫都得写。
 
+## 24. 用制包 Skill 真做一份题库：专升本 43 题（2026-10-29）
+
+前面几节都在验"工具能打包、能校验"，这一节验的是**换个身份用一遍**：
+拿 `tools/qbank-authoring-skill/` 当外部 Skill 使，从零做一份能练的题库，看它缺什么。
+
+### 24.1 交付物
+
+| 路径 | 内容 |
+|---|---|
+| `tools/qbank/examples/zhuanshengben-authoring/` | 源目录（manifest + 2 个结构分片 + 1 个文案分片） |
+| `tools/qbank/examples/zhuanshengben.qbank` | 真包，10,813 字节，sha256 `ba9a0aa2…`，digest `249d234a…` |
+
+43 题 / 4 科 / 12 个知识点：高等数学 13、大学英语 10、计算机基础 11、大学语文与马哲 8。
+题型：单选 24 / 多选 5 / 判断 10 / 简答 4；语言 zh-Hans 43/43；媒体 0；增强资料 0。
+
+### 24.2 「知识点」在格式里怎么放
+
+KT-QBF 没有独立的"知识点"字段。这份包用两条已有的路把它表达清楚：
+
+1. **每道题的解析就是一张知识点卡片**（`explanationMarkdown` 以 `**知识点：…**` 开头，写定义、
+   关键结论、易错点）。练习答完立刻能看到，不需要额外界面。
+2. **4 道「默知识点」题**（规范附录 A.2：`short_answer` + `grading.strategy = keywords`）：
+   要求把要点写出来，按 `required` 关键词判 —— 全命中判对、部分命中判「部分正确」、
+   一个都没命中判错。这是"知识点"和"题目"之间的一层：会做选择题不等于能说出要点。
+
+`tags` 用「知识点名 + 学科」，同一个知识点下的几道题标签一致，界面上可按标签归组。
+
+### 24.3 判题测试：43 题全部按标准答案答一遍
+
+新增 `ZhuanshengbenBankTest`（6 条）：
+
+| 用例 | 断言 |
+|---|---|
+| `parsesAllQuestionsWithTheirKnowledgeCards` | 43 题与题型分布；每题解析以知识点卡片开头、tags ≥ 2；判断题固定 2 选项且答案唯一；4 道默写题必须真的带 `required` |
+| `everyQuestionAcceptsItsOwnCorrectAnswer` | **43 题逐题**按包内标准答案作答应判 CORRECT |
+| `everyChoiceRejectsAWrongSelection` | 单选/判断换一个非正确选项、多选漏选一项，都应判 INCORRECT |
+| `keywordQuestionsGradeInThreeSteps` | 同一道默写题：全命中 → CORRECT、只写一半 → PARTIALLY_CORRECT、什么都没写到 → INCORRECT |
+| `explanationsReferToOptionContentNotToPositions` | 解析里不许用 `$o3$`、`选项 A` 这类按位置/编号的指代（选项会打乱，读者对不上） |
+| `importsIntoRepositoryAndStaysPracticeable` | 走 `ImportBankUseCase` 真导入，43 题；重复导入被指纹识别为 Duplicate |
+
+守卫验证：把 `cs04` 的参考答案改成不含「除基取余」的写法（作者改答案忘同步关键词的典型情形），
+`everyQuestionAcceptsItsOwnCorrectAnswer` 立刻变红；另把某题解析改回用 `$o4$` 指代选项，
+`explanationsReferToOptionContentNotToPositions` 也立刻变红。两次还原后包 sha256 都回到 `ba9a0aa2…`
+（同一份源目录两次打包字节完全相同，这一条也顺带验了可复现）。
+
+**这条测试守什么、不守什么**：它守"标准答案与判题规则自洽"（选项 ID 错位、关键词写漏、
+判断题答案填反都会被抓住）。它**不判断答案在学科上对不对** —— 那是人的事。所以 manifest 把
+`origin` 全部标成 `ai-assisted`，描述里写明"正式使用前请对照你所在省份的考试大纲复核"。
+
+### 24.4 这一遍暴露的三个问题
+
+1. **生成脚本自己会把多选题做成单选题**。一次性生成脚本里 `choice()` 默认 `single_choice`，
+   5 道多选忘了传 `multiple_choice`，结果"多选 0 道、单选 29 道"。**校验器不会报** ——
+   每道题单独看都是自洽的（一个正确选项的单选）。只有统计题型分布时才发现。
+   教训：题型分布要打印出来看，不能只看"打包 OK"。
+2. **Gradle 不把 `.qbank` 当成测试输入**。只改包、不改 Kotlin 源码时，`jvmTest` 被判 UP-TO-DATE
+   直接跳过 —— 测试报告是绿的，但它一次都没跑。我第一次注入错误答案时就是这样"通过"的。
+   已在 `shared/build.gradle.kts` 里把 `tools/qbank/examples/**/*.qbank` 与 `banks/**/*.qbank`
+   登记为测试输入；再验一次：改包后同一命令不再 UP-TO-DATE，注入的错误立刻被抓到。
+3. **解析里"按第几条"指代选项，打乱后就是错的**。我第一版写了「前三条是必背项」「第四条应为…」
+   以及 `$o4$ 少了 +C` 这类句子 —— 而选择题默认 `shuffleAllowed: true`，选项顺序每次都可能不同。
+   界面上没有"第四条"，只有一个被打乱的列表，用户读到的解析对不上任何一项。已全部改成引用选项内容，
+   并用 `explanationsReferToOptionContentNotToPositions` 守住这个方向。
+
 ## 已知限制（P10 之后仍然成立）
 
 | 限制 | 说明 |
