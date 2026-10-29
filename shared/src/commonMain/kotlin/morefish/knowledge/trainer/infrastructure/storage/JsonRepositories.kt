@@ -289,7 +289,9 @@ class JsonBankRepository(
         }.getOrNull() ?: return IndexRead.Lie
         // 内容锁：偏移算错了会在这里露馅，而不是把别人的题当成这一道交出去
         if (dto.questionId != questionId) return IndexRead.Lie
-        val question = dto.toDomain() ?: return IndexRead.Lie
+        // 题号对得上、内容却不成形（缺选项之类）：这一道确实用不了，但不是索引的错 ——
+        // 说成"撒谎"会导致每次定位都重建一遍，那才是真的惩罚
+        val question = dto.toDomain() ?: return IndexRead.Absent
         return IndexRead.Hit(
             QuestionLocation(
                 bankId = meta.bankId,
@@ -496,12 +498,12 @@ class JsonBankRepository(
         val fileBytes = random.byteLength(questionFileOf(meta.bankId)) ?: return null
 
         indexCache[meta.bankId]?.let { cached ->
-            if (cached.endOffset == fileBytes && cached.count == meta.questionCount) return cached
+            if (cached.covers(fileBytes, meta.questionCount)) return cached
             indexCache.remove(meta.bankId)
         }
 
         val parsed = storage.read(indexFileOf(meta.bankId))?.let { QuestionIndex.parse(it) }
-        if (parsed != null && parsed.endOffset == fileBytes && parsed.count == meta.questionCount) {
+        if (parsed != null && parsed.covers(fileBytes, meta.questionCount)) {
             rememberIndexLocked(meta.bankId, parsed)
             return parsed
         }
@@ -534,9 +536,9 @@ class JsonBankRepository(
             start = if (newline < 0) raw.length else newline + 1
         }
 
-        // 条数对不上说明有行读不懂（损坏行）。这时把表写下去只会让下一次又对不上：
-        // 内存里这份仍可用于本次查询，但不落盘、不进缓存。
-        if (index.count == meta.questionCount) {
+        // 比目录多出条目说明文件里真有目录不知道的题（崩在两次写之间）。这时把表写下去，
+        // 下一次还会因为"比目录多"而重建：那不是一张可以信任的表。
+        if (index.count <= meta.questionCount) {
             storage.write(indexFileOf(meta.bankId), index.render())
             rememberIndexLocked(meta.bankId, index)
         }
@@ -545,8 +547,11 @@ class JsonBankRepository(
 
     /** 从一行题目里取题号：优先走"行首字段"这条快路，取不到才解析整行。 */
     private fun questionIdOfLine(line: String): String? {
+        // 行必须看起来是一个**写完的**对象：崩在写一半的残行（`{"questionId":"q-1","type":"sing`）
+        // 也能从"行首字段"里抠出一个像样的 id，但它根本不是一道题 —— 索引里带上它，
+        // 结果是每查一次都要重建一次。宁可跳过，让它留给"损坏行"那条告警。
         val marker = "{\"questionId\":\""
-        if (line.startsWith(marker)) {
+        if (line.endsWith("}") && line.startsWith(marker)) {
             val close = line.indexOf('"', marker.length)
             if (close > marker.length) {
                 val raw = line.substring(marker.length, close)

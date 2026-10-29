@@ -141,6 +141,33 @@ class QuestionIndexTest {
     }
 
     @Test
+    fun aBankWithOneUnreadableLineStillUsesItsIndexAfterHealing() = runTest {
+        val storage = SliceStorage()
+        JsonBankRepository(storage).save(bank(3))
+
+        // 一行读不懂的坏数据（外部工具写坏、磁盘坏道都会这样）：
+        // 它让"文件字节数"与索引对不上，于是第一次定位会重建 —— 这是应该的
+        storage.appendLine(questionFileOf("b1"), """{"questionId":"q-broken","type":"single_choice","promp""")
+
+        val repository = JsonBankRepository(storage)
+        assertEquals(
+            "第 3 题：以下说法正确的是？（中文题干让字节数与字符数不同）",
+            repository.locate(listOf(QuestionRef("b1", "q-3"))).getValue(QuestionRef("b1", "q-3")).promptMarkdown,
+        )
+
+        // 重建之后不能每次都重建：坏行跳过，条目数 3（不超过目录题数），表可以落盘并缓存
+        storage.resetReads()
+        assertEquals(
+            "第 1 题：以下说法正确的是？（中文题干让字节数与字符数不同）",
+            repository.locate(listOf(QuestionRef("b1", "q-1"))).getValue(QuestionRef("b1", "q-1")).promptMarkdown,
+        )
+        assertEquals(0, storage.wholeQuestionReads, "坏行不该让每一次定位都退回整份读")
+        // 那道坏行本身定位不到，而且**不该**被当成"索引在撒谎"
+        assertTrue(repository.locate(listOf(QuestionRef("b1", "q-broken"))).isEmpty())
+        assertEquals(0, storage.wholeQuestionReads, "定位一道坏题也不该整份读")
+    }
+
+    @Test
     fun addingAQuestionExtendsTheIndexInsteadOfRewritingIt() = runTest {
         val storage = SliceStorage()
         JsonBankRepository(storage).save(bank(3))
@@ -185,13 +212,21 @@ class QuestionIndexTest {
         var bytesRead = 0L
             private set
 
+        /** 整份读过几次题目文件 —— 走索引之后这个数不该再动。 */
+        var wholeQuestionReads = 0
+            private set
+
         fun resetReads() {
             bytesRead = 0
+            wholeQuestionReads = 0
         }
 
         override val isPersistent: Boolean = false
 
-        override fun read(name: String): String? = files[name]?.decodeToString()
+        override fun read(name: String): String? {
+            if (name.startsWith("banks/") && name.endsWith(".ndjson")) wholeQuestionReads++
+            return files[name]?.decodeToString()
+        }
 
         override fun write(name: String, content: String) {
             files[name] = content.encodeToByteArray()

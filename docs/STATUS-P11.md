@@ -52,11 +52,22 @@ q-000002	512	509
 | 锁 | 判据 | 不成立时 |
 |---|---|---|
 | 结构锁 | 最后一条的结束位置 == 题目文件字节长度 | 重建 |
-| 条数锁 | 解析出的条数 == 目录里的题数 | 重建 |
+| 条数锁 | 解析出的条数 **不超过**目录里的题数（多出来 = 文件里有目录不知道的题） | 重建 |
 | 内容锁 | 按索引读回来的那一行，`questionId` 就是要找的那个 | 这一库的索引结果全作废，重建后退回扫描 |
 
 "一次图谱刷新查两三道题"里，任意一道触发内容锁，本次查询就老老实实扫一遍 ——
 结果是**这次慢、下次不慢**，而不是快但可能错。
+
+条数锁为什么用"不超过"：文件里若有读不懂的行，重建出来的条目天然少几条；要求相等
+会让这种库**每次**定位都重建一遍 —— 把一个数据问题变成了性能悬崖。反过来"多出条目"
+不能接受：那说明文件里有目录还不知道的题。
+
+内容锁还有一条分寸：题号对得上、内容却不成形（缺选项之类），算「这一道用不了」，
+不算「索引撒谎」。否则每次定位都会触发一次重建。
+
+重建时也不收"半截行"：`{"questionId":"q-1","type":"sing` 这种崩在写一半的残行，
+从行首字段里能抠出一个像样的 id，但它不是一道题；收进索引就会让每次校验都失败。
+判据很便宜 —— 整行以 `}` 结尾才算写完。
 
 ## 4. 数字（十万题 / 49.9MB，同一次运行内的对照）
 
@@ -82,6 +93,7 @@ q-000002	512	509
 | `QuestionIndexTest.locateReadsOnlyTheIndexedLineRatherThanTheWholeFile` | 定点读只读那一行 | `locate` 改回整份读 → 读到 2.4MB |
 | `QuestionIndexTest.indexIsRebuiltWhenTheFileGrowsBehindItsBack` | 结构锁：索引落后于文件就不许用 | 去掉 `endOffset` 校验 → 拿旧表照着读 |
 | `QuestionIndexTest.aCorruptIndexIsTreatedAsSuspectNotAsTruth` | 内容锁：读到的必须是这一道 | 去掉 `dto.questionId != questionId` → 返回别人的题 |
+| `QuestionIndexTest.aBankWithOneUnreadableLineStillUsesItsIndexAfterHealing` | 坏行跳过后表仍可用，不变成"每次重建" | 把"残行"也收进索引 → 条目数多一条，永远重新校验 |
 | `QuestionIndexTest.addingAQuestionExtendsTheIndexInsteadOfRewritingIt` | 追加时索引跟着长 | 只写题目行不写索引行 → 下次必然重建 |
 | `QuestionIndexTest.removingABankRemovesItsIndexToo` | 删库连索引一起删 | 漏删 → 空目录收不掉 |
 | `LargeBankTest.locatingAQuestionReadsOneLineNotTheWholeBank` | **整份读次数 = 0** | `locate` 走扫描 → 立刻变成 1 |

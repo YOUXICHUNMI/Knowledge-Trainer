@@ -42,6 +42,16 @@ internal class QuestionIndex private constructor(
 
     fun contains(questionId: String): Boolean = positions.containsKey(questionId)
 
+    /**
+     * 能不能拿这张表去回答查询：它得**正好铺到文件末尾**，且条目数不超过目录里的题数。
+     *
+     * 第二条用的是"不超过"而不是"等于"：文件里如果有读不懂的行，重建出来的条目天然少几条，
+     * 要求相等会让这种库每次定位都重建一遍 —— 那是把一个数据问题变成了性能悬崖。
+     * 反过来"多出条目"不能被接受：那说明文件里有目录还不知道的题，该重建。
+     */
+    fun covers(fileBytes: Long, catalogCount: Int): Boolean =
+        endOffset == fileBytes && count <= catalogCount
+
     /** 追加一条：位置接着 [endOffset] 往下排，顺序必须与题目文件一致。 */
     fun add(questionId: String, length: Int) {
         if (length <= 0 || positions.containsKey(questionId)) return
