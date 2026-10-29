@@ -88,6 +88,19 @@ internal fun indexFileOf(bankId: String): String =
  */
 internal const val INDEX_FILE_NAME = "offsets-v1.tsv"
 
+internal fun searchIndexFileOf(bankId: String): String =
+    questionFileOf(bankId).substringBeforeLast('/') + "/$SEARCH_FILE_NAME"
+
+internal fun searchTailFileOf(bankId: String): String =
+    questionFileOf(bankId).substringBeforeLast('/') + "/$SEARCH_TAIL_FILE_NAME"
+
+/**
+ * 倒排索引与它的尾巴，都是派生数据，备份一个都不带（见 `DirectoryVault.isIgnoredName`）。
+ * 尾巴是"整库写完又追加进来的那几行"的临时记账 —— 主索引不重排，查询时补上它。
+ */
+internal const val SEARCH_FILE_NAME = "search-v1.tsv"
+internal const val SEARCH_TAIL_FILE_NAME = "search-tail-v1.tsv"
+
 /**
  * 题库仓储：目录 + 每库一个 NDJSON。
  *
@@ -184,12 +197,24 @@ class JsonBankRepository(
 
         // 先写题目行，再写索引行：崩在两步之间只会让索引**落后**（结构锁能发现并重建），
         // 而不是让索引**超前**（那会指向一个还没写进来的位置）。
+        // 尾巴攒太长了：趁这次追加先把主索引重排一遍。
+        // 必须赶在"把这一行写进文件"之前 —— 重排是照着文件扫的，
+        // 文件已经多了一行、偏移表还没记，两边就对不上，重排出来的表会当场作废。
+        val tailBytes = (storage as? RandomAccessText)?.byteLength(searchTailFileOf(bankId))
+        if (index != null && tailBytes != null && tailBytes > SEARCH_TAIL_LIMIT_BYTES) {
+            rebuildSearchIndexLocked(meta, index)
+        }
+
         val length = lineByteLength(line)
         val offset = index?.endOffset
+        // 这一行走索引里的哪一格，要在 add 之前取（add 之后 count 就变了）
+        val row = index?.count ?: -1
         storage.appendLine(file, line)
         if (index != null && offset != null) {
             storage.appendLine(indexFileOf(bankId), "${question.questionId}\t$offset\t$length")
             index.add(question.questionId, length)
+            // 倒排表不重排，把这一行的词记进尾巴；查询时会补上。
+            appendSearchTailLocked(bankId, row, question.promptMarkdown)
         }
         val nextCount = meta.questionCount + 1
         writeCatalogLocked(rest + meta.copy(
@@ -217,8 +242,11 @@ class JsonBankRepository(
         writeCatalogLocked(catalog.filterNot { it.bankId == bankId })
         // 索引先删：题目文件删掉后父目录空了会被顺手收走，留着索引会让那次收尾落空。
         storage.delete(indexFileOf(bankId))
+        storage.delete(searchIndexFileOf(bankId))
+        storage.delete(searchTailFileOf(bankId))
         storage.delete(questionFileOf(bankId))
         forgetIndexLocked(bankId)
+        forgetSearchLocked(bankId)
         true
     }
 
@@ -335,31 +363,26 @@ class JsonBankRepository(
     /**
      * 搜题干。刻意不搜选项文字：四个选项里都可能出现同一个词，
      * 搜出来的每道题都"命中"，等于没搜。
+     *
+     * 走倒排表（见 [SearchIndex]）：中文按二元组切，取交集得到候选，再逐行读回来
+     * 用完整子串复核。十万题的库上这是 1.26s → 几十毫秒的那一刀。
+     *
+     * 索引不可用时（Web / 内存后端、校验不过）退回全表扫描 —— 结果一样，只是慢。
+     * 两条路径用的是同一个 [matchesQuery] 判据，所以"快的那条搜到了、慢的那条搜不到"
+     * 这种事不会发生。
      */
     override suspend fun searchQuestions(keyword: String, limit: Int): List<QuestionLocation> {
         val query = keyword.trim()
         if (query.isEmpty() || limit <= 0) return emptyList()
+        val segments = searchQuerySegments(query)
+        if (segments.isEmpty()) return emptyList()
+        val terms = searchTermsOf(query)
+
         return mutex.withLock {
             val hits = ArrayList<QuestionLocation>()
-            outer@ for (meta in readCatalogLocked()) {
-                val raw = storage.read(questionFileOf(meta.bankId)) ?: continue
-                for (line in raw.lineSequence()) {
-                    if (hits.size >= limit) break@outer
-                    if (line.isBlank() || !line.contains(query, ignoreCase = true)) continue
-                    val dto = runCatching {
-                        questionJson.decodeFromString(QuestionDto.serializer(), line)
-                    }.getOrNull() ?: continue
-                    val question = dto.toDomain() ?: continue
-                    if (!question.promptMarkdown.contains(query, ignoreCase = true)) continue
-                    hits += QuestionLocation(
-                        bankId = meta.bankId,
-                        bankTitle = meta.title,
-                        questionId = question.questionId,
-                        promptMarkdown = question.promptMarkdown,
-                        type = question.type,
-                        contentRevision = question.contentRevision,
-                    )
-                }
+            for (meta in readCatalogLocked()) {
+                if (hits.size >= limit) break
+                searchInBankLocked(meta, terms, segments, limit - hits.size, hits)
             }
             hits
         }
@@ -564,6 +587,256 @@ class JsonBankRepository(
         }.getOrNull()
     }
 
+    // ---- 倒排索引 ----
+
+    /**
+     * 解析好的倒排表缓存。**只留一份**：一份十万题的倒排表约 6MB（一百多万个 postings），
+     * 留两份就是十二三 MB —— 手机上这已经是"能不能开着别的应用"的区别。
+     * 跨库搜索时会有缓存抖动，但每次抖动只是重新解析一次（几百毫秒），不是重新扫描（一秒多）。
+     */
+    private var searchCache: Pair<String, SearchIndex>? = null
+
+    private fun forgetSearchLocked(bankId: String) {
+        if (searchCache?.first == bankId) searchCache = null
+    }
+
+    /**
+     * 取这个库的倒排表：缓存 → 文件 → 重建。
+     *
+     * 与偏移表不同，这张表**没有增量路径**：追加一行时主索引不重排（那要改十几处位置），
+     * 而是把这一行的词记进 [searchTailFileOf]，查询时补上。尾巴长到阈值时，
+     * 下一次追加顺手重建一次 —— 把一次整份扫描摊到几百次追加上。
+     */
+    private fun searchIndexForLocked(meta: BankMetaDto): SearchIndex? {
+        val random = storage as? RandomAccessText ?: return null
+        val qIndex = indexForLocked(meta) ?: return null
+        val fileBytes = random.byteLength(questionFileOf(meta.bankId)) ?: return null
+
+        searchCache?.let { (cachedBank, cached) ->
+            if (cachedBank == meta.bankId && usableLocked(meta, cached, fileBytes, qIndex)) return cached
+            if (cachedBank == meta.bankId) searchCache = null
+        }
+
+        val parsed = storage.read(searchIndexFileOf(meta.bankId))?.let { SearchIndex.parse(it) }
+        if (parsed != null && usableLocked(meta, parsed, fileBytes, qIndex)) {
+            searchCache = meta.bankId to parsed
+            return parsed
+        }
+        return rebuildSearchIndexLocked(meta, qIndex)
+    }
+
+    /**
+     * 这张倒排表还能不能用来回答查询。
+     *
+     * 比偏移表的结构锁宽一点，因为倒排表**不随追加而重排**：文件在后头长长是正常的，
+     * 那些新行由尾巴（[searchTailFileOf]）补。所以判据分三种情况：
+     *
+     * - 文件比索引生成时**短**：被改写过了，行号随时可能错位 —— 重建；
+     * - 偏移表与索引一样长（没有新行）：要求字节数完全一致，否则重建；
+     * - 偏移表比索引多 N 行：尾巴里得至少有 N 行记账，否则说明有行是绕过仓储写进来的，
+     *   主索引根本不知道它 —— 重建。
+     *
+     * 最后一条是这个设计的关键：没有它，"另一个进程往文件里加了一行"会让那一行
+     * 永远搜不到，而界面上看不出任何异常。
+     */
+    private fun usableLocked(
+        meta: BankMetaDto,
+        search: SearchIndex,
+        fileBytes: Long,
+        qIndex: QuestionIndex,
+    ): Boolean {
+        if (fileBytes < search.fileBytes) return false
+        if (qIndex.count < search.slots) return false
+        val missing = qIndex.count - search.slots
+        if (missing == 0) return fileBytes == search.fileBytes
+        return tailRowCountLocked(meta) >= missing
+    }
+
+    /** 尾巴里记了几行。 */
+    private fun tailRowCountLocked(meta: BankMetaDto): Int {
+        val raw = storage.read(searchTailFileOf(meta.bankId)) ?: return 0
+        if (raw.isBlank()) return 0
+        var count = 0
+        for (line in raw.lineSequence()) if (line.isNotBlank()) count++
+        return count
+    }
+
+    /**
+     * 从题目文件重排倒排表。
+     *
+     * **行号必须与偏移表同源**：跳过哪些行、按什么顺序编号，两边用的是同一个
+     * [questionIdOfLine]。不同源的后果不是慢，是把别人的题当成命中交出去。
+     */
+    private fun rebuildSearchIndexLocked(meta: BankMetaDto, qIndex: QuestionIndex): SearchIndex? {
+        val raw = storage.read(questionFileOf(meta.bankId)) ?: return null
+        val builder = SearchIndexBuilder()
+        var row = 0
+        for (line in raw.lineSequence()) {
+            if (line.isBlank()) continue
+            // 与偏移表同一把尺子：题号读不出来就不占槽
+            questionIdOfLine(line) ?: continue
+            val prompt = runCatching {
+                questionJson.decodeFromString(QuestionDto.serializer(), line).promptMarkdown
+            }.getOrNull().orEmpty()
+            builder.add(row, prompt)
+            row++
+        }
+
+        // 行号上界与偏移表对不上，说明这次扫描和那份表看到的不是同一个文件。
+        // 内存里这份仍可用于本次查询，但不落盘、不进缓存 —— 写下去只会让下一次也错。
+        val search = builder.build(qIndex.endOffset, builder.rowCount)
+        if (builder.rowCount == qIndex.count) {
+            storage.write(searchIndexFileOf(meta.bankId), builder.render(qIndex.endOffset, builder.rowCount))
+            // 主索引已覆盖全部行，尾巴作废
+            storage.delete(searchTailFileOf(meta.bankId))
+            searchCache = meta.bankId to search
+        }
+        return search
+    }
+
+    /**
+     * 把一行的词记进尾巴。
+     *
+     * 只记词、不记题干：一行约 60 字节而不是 500 —— 尾巴是"每次都整份读"的东西，
+     * 它的体积直接就是搜索的固定开销。
+     */
+    private fun appendSearchTailLocked(bankId: String, row: Int, prompt: String) {
+        val terms = StringBuilder()
+        val seen = HashSet<String>()
+        forEachSearchTerm(prompt) { term ->
+            if (seen.add(term)) {
+                if (terms.isNotEmpty()) terms.append(',')
+                terms.append(term)
+            }
+        }
+        storage.appendLine(searchTailFileOf(bankId), "$row\t$terms")
+    }
+
+    /**
+     * 尾巴里命中查询的行号（升序）。
+     *
+     * 用 `,词,` 两侧加逗号的子串判断代替切分：尾巴每查一次都要整份读，
+     * 切成一堆 List 只为了看某个词在不在，纯属白花钱。
+     */
+    private fun tailRowsLocked(meta: BankMetaDto, terms: List<String>): List<Int> {
+        val raw = storage.read(searchTailFileOf(meta.bankId)) ?: return emptyList()
+        if (raw.isBlank()) return emptyList()
+        val rows = ArrayList<Int>()
+        for (line in raw.lineSequence()) {
+            if (line.isBlank()) continue
+            val tab = line.indexOf('\t')
+            if (tab <= 0) continue
+            val row = line.substring(0, tab).toIntOrNull() ?: continue
+            val padded = "," + line.substring(tab + 1) + ","
+            if (terms.all { padded.contains(",$it,") }) {
+                // 尾巴里的行号天然比主索引大；写了两次的只认第一次
+                if (rows.isEmpty() || rows.last() != row) rows += row
+            }
+        }
+        return rows
+    }
+
+    /** 读回某一行的题目并核对内容；对不上就是"这一行不是答案"，不是"索引坏了"。 */
+    private fun searchRowLocked(
+        random: RandomAccessText,
+        meta: BankMetaDto,
+        qIndex: QuestionIndex,
+        fileBytes: Long,
+        row: Int,
+        segments: List<String>,
+    ): QuestionLocation? {
+        val entry = qIndex.at(row) ?: return null
+        // 就按索引里记的长度读：它和行号是同一次扫描算出来的，本来就是精确值。
+        // 早先版本多读 2KB 兜底，实测多花的字节数占搜索总读取量的四分之三 ——
+        // 而"兜底"能挡的那种情况（长度偏小）会在这里解码失败、跳过这一行，
+        // 结果是少一条命中，不是给出错答案。
+        val window = minOf(entry.length.toLong(), SEARCH_READ_MAX.toLong(), fileBytes - entry.offset).toInt()
+        if (window <= 0) return null
+        val raw = random.readRange(questionFileOf(meta.bankId), entry.offset, window) ?: return null
+        val line = raw.substringBefore('\n')
+        val dto = runCatching {
+            questionJson.decodeFromString(QuestionDto.serializer(), line)
+        }.getOrNull() ?: return null
+        if (!matchesQuery(dto.promptMarkdown, segments)) return null
+        val question = dto.toDomain() ?: return null
+        return QuestionLocation(
+            bankId = meta.bankId,
+            bankTitle = meta.title,
+            questionId = question.questionId,
+            promptMarkdown = question.promptMarkdown,
+            type = question.type,
+            contentRevision = question.contentRevision,
+        )
+    }
+
+    /** 老实路径：读整份、逐行扫。索引不可用时走这条，结果与索引路径一致。 */
+    private fun scanSearchLocked(
+        meta: BankMetaDto,
+        segments: List<String>,
+        room: Int,
+        hits: MutableList<QuestionLocation>,
+    ) {
+        val raw = storage.read(questionFileOf(meta.bankId)) ?: return
+        var added = 0
+        for (line in raw.lineSequence()) {
+            if (added >= room) break
+            if (line.isBlank()) continue
+            val dto = runCatching {
+                questionJson.decodeFromString(QuestionDto.serializer(), line)
+            }.getOrNull() ?: continue
+            if (!matchesQuery(dto.promptMarkdown, segments)) continue
+            val question = dto.toDomain() ?: continue
+            hits += QuestionLocation(
+                bankId = meta.bankId,
+                bankTitle = meta.title,
+                questionId = question.questionId,
+                promptMarkdown = question.promptMarkdown,
+                type = question.type,
+                contentRevision = question.contentRevision,
+            )
+            added++
+        }
+    }
+
+    /** 在一个库里搜索：有索引走索引，没有就走扫描。 */
+    private fun searchInBankLocked(
+        meta: BankMetaDto,
+        terms: List<String>,
+        segments: List<String>,
+        room: Int,
+        hits: MutableList<QuestionLocation>,
+    ) {
+        val random = storage as? RandomAccessText
+        val qIndex = if (random != null) indexForLocked(meta) else null
+        val search = if (random != null && qIndex != null) searchIndexForLocked(meta) else null
+        // terms 为空 = 查询全是单字，没有可用来筛候选的二元组：老实扫一遍。
+        // 这条不是"索引失效"，是"这个查询本身没有可索引的东西"。
+        if (random == null || qIndex == null || search == null || terms.isEmpty()) {
+            scanSearchLocked(meta, segments, room, hits)
+            return
+        }
+
+        val fileBytes = random.byteLength(questionFileOf(meta.bankId)) ?: return
+
+        var added = 0
+        // 主索引的候选是升序的；尾巴的行号天然更大，接着往后走就是全序，不必排序
+        for (row in search.candidates(terms)) {
+            if (added >= room) return
+            val location = searchRowLocked(random, meta, qIndex, fileBytes, row, segments) ?: continue
+            hits += location
+            added++
+        }
+        var lastRow = -1
+        for (row in tailRowsLocked(meta, terms)) {
+            if (added >= room) return
+            if (row <= lastRow) continue
+            lastRow = row
+            val location = searchRowLocked(random, meta, qIndex, fileBytes, row, segments) ?: continue
+            hits += location
+            added++
+        }
+    }
+
     /**
      * 返回实际写入的条数、题型分布与**内容指纹**；这三个值随后进目录。
      *
@@ -578,12 +851,14 @@ class JsonBankRepository(
     private fun writeQuestionsLocked(bankId: String, questions: List<Question>): WrittenQuestions {
         val builder = StringBuilder()
         val index = QuestionIndexBuilder()
+        val search = SearchIndexBuilder()
         val counts = mutableMapOf<String, Int>()
         val fingerprint = Fingerprint.Accumulator()
         var written = 0
         questions.forEach { question ->
             val line = questionJson.encodeToString(QuestionDto.serializer(), question.toDto())
             index.append(question.questionId, lineByteLength(line))
+            search.add(written, question.promptMarkdown)
             builder.append(line).append('\n')
             fingerprint.add(question.contentFingerprint())
             counts[question.type.wireName] = (counts[question.type.wireName] ?: 0) + 1
@@ -593,15 +868,25 @@ class JsonBankRepository(
         // 结构锁同样能发现，但先写内容更符合"文件是本体、索引是旁注"的次序。
         storage.write(questionFileOf(bankId), builder.toString())
         storage.write(indexFileOf(bankId), index.build())
+        // 倒排表顺手排出来（这一步是纯内存的），尾巴随之作废：主索引已经覆盖全部行。
+        storage.write(searchIndexFileOf(bankId), search.render(index.endOffset, search.rowCount))
+        storage.delete(searchTailFileOf(bankId))
         forgetIndexLocked(bankId)
+        forgetSearchLocked(bankId)
         return WrittenQuestions(written, counts, fingerprint.value(), Fingerprint.CURRENT_VERSION, index.endOffset)
     }
 
     private companion object {
         const val CATALOG_SCHEMA_VERSION = 2
 
-        /** 内存里最多留几份解析好的索引（一份十万题的索引约 6MB）。 */
+        /** 内存里最多留几份解析好的偏移表（一份十万题的索引约 6MB）。 */
         const val MAX_CACHED_INDEXES = 2
+
+        /** 尾巴长到这个字节数，下一次追加顺手重建主索引 —— 别让它无限长下去。 */
+        const val SEARCH_TAIL_LIMIT_BYTES = 64L * 1024
+
+        /** 单行最多读这么远 —— 再长就不是题库，是别的东西混进来了。 */
+        const val SEARCH_READ_MAX = 256 * 1024
     }
 }
 

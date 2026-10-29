@@ -18,6 +18,7 @@ import morefish.knowledge.trainer.infrastructure.storage.FileTextStorage
 import morefish.knowledge.trainer.infrastructure.storage.JsonBankRepository
 import morefish.knowledge.trainer.infrastructure.storage.indexFileOf
 import morefish.knowledge.trainer.infrastructure.storage.questionFileOf
+import morefish.knowledge.trainer.infrastructure.storage.searchIndexFileOf
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -177,10 +178,28 @@ class LargeBankTest {
         mark.record("定点取题·之后（只读那一行）", bankBytes)
         assertEquals("第 $probe 题：以下说法正确的是？", located.getValue(ref).promptMarkdown)
 
-        // 2) 搜一个只命中一道题的词，且这一道在文件末尾（最坏情况）
-        val hits = repository.searchQuestions("第 $target 题", 5)
-        mark.record("搜题干（全表扫描）", bankBytes)
+        // 2) 搜一个只命中一道题的词，且这一道在文件末尾（选择性最高的情况）
+        val scanHits = scanOnly.searchQuestions("第 $target 题", 5)
+        mark.record("对照：搜题干（读整份 + 全表扫描）", bankBytes)
+        assertEquals(1, scanHits.size, "只该命中最后一道题：${scanHits.map { it.questionId }}")
+
+        // 2b) 走倒排表：第一次要先解析该库的倒排表，之后只读候选那几行
+        val searchStorage = CountingStorage(storage)
+        val searchRepo = JsonBankRepository(searchStorage)
+        searchRepo.searchQuestions("第 $target 题", 5)
+        mark.record("搜题干·第一次（解析倒排表）", File(root, searchIndexFileOf("bench-bank")).length())
+
+        searchStorage.resetReads()
+        val hits = searchRepo.searchQuestions("第 $target 题", 5)
+        mark.record("搜题干·之后（只读候选行）", searchStorage.rangeBytes)
         assertEquals(1, hits.size, "只该命中最后一道题：${hits.map { it.questionId }}")
+        assertEquals(0, searchStorage.wholeQuestionReads, "走倒排表的搜索不该把整份题目文件读回来")
+
+        // 2c) 最坏情况：查询词几乎每道题都有（"以下说法"），候选是整库
+        val commonHits = searchRepo.searchQuestions("以下说法", 5)
+        mark.record("搜题干·高频词（候选十万行，只验证前 5 条）", bankBytes)
+        assertEquals(5, commonHits.size, "高频词该能凑满上限：${commonHits.map { it.questionId }}")
+        assertEquals(0, searchStorage.wholeQuestionReads, "高频词也不该退化成整份读")
 
         // 3) 加一道题 —— 把真实路径拆成两段分别量
         val listed = repository.find("bench-bank")!!

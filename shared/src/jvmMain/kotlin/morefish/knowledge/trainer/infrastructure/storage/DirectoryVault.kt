@@ -387,8 +387,11 @@ class DirectoryVault(
      *   那台机器启动时会去收拾一场不存在的崩溃。
      */
     private fun isIgnoredName(name: String): Boolean =
-        // 题目索引是派生数据：能重建、且每个库都占一成的体积。备份不带它。
+        // 偏移表与倒排表都是派生数据：能重建，且加起来能占题目文件的四分之一。备份一个都不带。
+        // 尾巴同样是派生的 —— 它只是"主索引还没吸收的那几行"。
         name == INDEX_FILE_NAME ||
+            name == SEARCH_FILE_NAME ||
+            name == SEARCH_TAIL_FILE_NAME ||
             name.endsWith(".tmp") ||
             name.contains(".restore-staging-") ||
             name.contains(".pre-restore-") ||

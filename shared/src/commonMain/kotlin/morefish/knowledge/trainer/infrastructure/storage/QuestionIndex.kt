@@ -43,6 +43,15 @@ internal class QuestionIndex private constructor(
     fun contains(questionId: String): Boolean = positions.containsKey(questionId)
 
     /**
+     * 按**槽位号**取一行。槽位号就是"这是第几道读得出题号的题"（坏行不占槽），
+     * 倒排索引里记的行号用的也是这套编号 —— 前提是两边同一次扫描、同一套判定。
+     */
+    fun at(row: Int): Entry? {
+        if (row < 0 || row >= count) return null
+        return Entry(offsets[row], lengths[row])
+    }
+
+    /**
      * 能不能拿这张表去回答查询：它得**正好铺到文件末尾**，且条目数不超过目录里的题数。
      *
      * 第二条用的是"不超过"而不是"等于"：文件里如果有读不懂的行，重建出来的条目天然少几条，
