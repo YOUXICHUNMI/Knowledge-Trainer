@@ -29,8 +29,18 @@ def fnv1a64(text: str) -> str:
 
 
 def of_questions(parts) -> str:
-    """Kotlin `Fingerprint.ofQuestions`：题目指纹集合的指纹，与语言和顺序无关。"""
-    return fnv1a64("\u0000".join(sorted(parts)))
+    """Kotlin `Fingerprint.ofQuestions`：题目指纹集合的指纹，与语言和顺序无关。
+
+    做法是**逐项相加**（模 2^64），不是"排序后拼接再哈希"。两者都是多重集指纹，
+    区别在代价：相加可以增量更新（加一道题 = 旧值 + 新题指纹，与库多大无关），
+    排序拼接必须把整库重算一遍 —— 十万题的库加一道题要 200ms，而新增内容只有 512 字节。
+
+    它只是查重与补丁定位的锚点，不是安全哈希；抗构造碰撞因此比整串哈希弱一些。
+    """
+    total = 0
+    for part in parts:
+        total = (total + int(fnv1a64(part), 16)) & _MASK
+    return format(total, "016x")
 
 
 def question_fingerprint(q: dict) -> str:

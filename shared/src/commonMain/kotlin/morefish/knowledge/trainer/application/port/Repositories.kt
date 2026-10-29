@@ -6,6 +6,7 @@ import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.AttemptRecord
 import morefish.knowledge.trainer.domain.model.Note
 import morefish.knowledge.trainer.domain.model.PracticeSession
+import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
 import morefish.knowledge.trainer.domain.model.QuestionType
 import morefish.knowledge.trainer.domain.patch.BankRevision
@@ -27,12 +28,48 @@ data class QuestionLocation(
     val ref: QuestionRef get() = QuestionRef(bankId, questionId)
 }
 
+/** [BankRepository.addQuestion] 的三种结局。没有"失败"这一档：写不进去就抛异常。 */
+sealed interface AddQuestionResult {
+    /** 已追加，目录同步更新。 */
+    data object Added : AddQuestionResult
+
+    /** 目录里没有这个题库（已被移除，或 id 写错）。 */
+    data object BankMissing : AddQuestionResult
+
+    /** 这个库里已经有同 id 的题。什么都没写 —— "已经在里面"和"刚加进去"是两件事。 */
+    data object DuplicateId : AddQuestionResult
+}
+
 /** 题库仓储。作者原始题库只读语义在本层体现为"整体替换/新增"，不支持就地改单题。 */
 interface BankRepository {
     suspend fun list(): List<QuestionBank>
     suspend fun find(bankId: String): QuestionBank?
     suspend fun findByFingerprint(fingerprint: String): QuestionBank?
     suspend fun save(bank: QuestionBank)
+
+    /**
+     * 往已有题库里**追加一道题**。
+     *
+     * 结果与 `save(bank.copy(questions = bank.questions + q, contentRevision = … + 1))` 相同，
+     * 区别只在代价：`save` 的语义是"用这份列表替换该库的全部题目"，实现只能整库重写；
+     * 而"追加一道"是可以只写一行的。十万题的库上这两件事差了五个数量级
+     * （49.9MB vs 512 字节，实测见 `docs/STATUS-P10.md` 第 20、21 节）。
+     *
+     * 契约（实现必须满足，且可与"读出来 copy 一份再 save"逐字段对照）：
+     *
+     * - 写完之后，目录里的题数、题型分布、语言覆盖度、内容指纹必须**等于实际内容**；
+     * - 该库内容变了，`contentRevision` 加一；别的库一概不碰；
+     * - 题目 id 重复时**什么都不写**并返回 [AddQuestionResult.DuplicateId]。
+     *
+     * 默认实现是"读出来改名再整库写回"—— 语义最直白的那个。存储实现可以覆盖它，
+     * 但覆盖之后上面几条一句都不能少。
+     */
+    suspend fun addQuestion(bankId: String, question: Question): AddQuestionResult {
+        val bank = find(bankId) ?: return AddQuestionResult.BankMissing
+        if (bank.questions.any { it.questionId == question.questionId }) return AddQuestionResult.DuplicateId
+        save(bank.copy(questions = bank.questions + question, contentRevision = bank.contentRevision + 1))
+        return AddQuestionResult.Added
+    }
 
     /**
      * 从书架上移除一个题库：目录条目与它的题目文件一起删掉。

@@ -96,10 +96,11 @@ class ImportBankUseCase(
         // 身份优先：同一个 bankId 就是同一个题库，哪怕内容变了。
         // 先按 id 找，再看内容是否一致 —— 顺序反过来会把"新版本"误判成"另一个库"。
         banks.find(parsed.bankId)?.let { existing ->
-            val existingFingerprint = existing.fingerprint.ifBlank {
-                Fingerprint.ofQuestions(existing.questions.map { it.contentFingerprint() })
-            }
-            return if (existingFingerprint == fingerprint) {
+            // 内容指纹换过一次算法（排序拼接 → 可增量求和，见 Fingerprint.CURRENT_VERSION）。
+            // 老库目录里存的是旧算法的值，直接比会得出"内容不同"——同一个包被报成"不同版本"。
+            // 所以先比存储值；只有它比当前算法旧时才按内容重算一遍（代价是一次整库解析，
+            // 且只在新版本之后第一次碰到老库时发生，那个库被写过一次之后就是新值）。
+            return if (sameContentAs(existing, fingerprint)) {
                 ImportOutcome.Duplicate(existing, preview)
             } else {
                 ImportOutcome.IdentityConflict(existing, preview)
@@ -180,5 +181,17 @@ class ImportBankUseCase(
         )
         banks.save(bank)
         return ImportOutcome.Imported(bank, preview)
+    }
+
+    /**
+     * 本地这个库的内容是不是就是 [incoming] 这份。
+     *
+     * 先比目录里存着的指纹（零成本）；只有它比当前算法旧、值又对不上时，才按**实际内容**
+     * 用当前算法重算一遍 —— 老库的旧值不可能等于新算法的结果，不重算就只能报"内容不同"。
+     */
+    private fun sameContentAs(existing: QuestionBank, incoming: String): Boolean {
+        if (existing.fingerprint.isNotBlank() && existing.fingerprint == incoming) return true
+        if (existing.fingerprintVersion >= Fingerprint.CURRENT_VERSION) return false
+        return Fingerprint.ofQuestions(existing.questions.map { it.contentFingerprint() }) == incoming
     }
 }

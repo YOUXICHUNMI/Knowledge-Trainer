@@ -1,6 +1,7 @@
 package morefish.knowledge.trainer.infrastructure
 
 import kotlinx.coroutines.test.runTest
+import morefish.knowledge.trainer.application.port.AddQuestionResult
 import morefish.knowledge.trainer.application.port.InMemoryTextStorage
 import morefish.knowledge.trainer.application.usecase.SubmitAnswerUseCase
 import morefish.knowledge.trainer.domain.i18n.LocaleCoverage
@@ -16,10 +17,13 @@ import morefish.knowledge.trainer.domain.model.SessionItem
 import morefish.knowledge.trainer.domain.model.Verdict
 import morefish.knowledge.trainer.infrastructure.storage.ATTEMPTS_FILE
 import morefish.knowledge.trainer.infrastructure.storage.BANKS_FILE
+import morefish.knowledge.trainer.infrastructure.storage.BankCatalogDto
+import morefish.knowledge.trainer.infrastructure.storage.BankMetaDto
 import morefish.knowledge.trainer.infrastructure.storage.DeferredQuestions
 import morefish.knowledge.trainer.infrastructure.storage.JsonAttemptRepository
 import morefish.knowledge.trainer.infrastructure.storage.JsonBankRepository
 import morefish.knowledge.trainer.infrastructure.storage.questionFileOf
+import morefish.knowledge.trainer.infrastructure.storage.storageJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -391,4 +395,176 @@ class PersistenceTest {
         assertFalse(repository.delete("b1"), "第二次删除什么都没删，不能报告成功")
     }
 
+
+    // ---- addQuestion：代价可以小，但结果必须与"读出来 copy 一份再 save"逐字段一致 ----
+
+    private fun extra(id: String) = Question(
+        questionId = id,
+        type = QuestionType.SHORT_ANSWER,
+        promptMarkdown = "第 $id 题",
+        answerText = "答案",
+    )
+
+    private fun catalogFingerprintOf(bank: QuestionBank): String =
+        Fingerprint.ofQuestions(bank.questions.map { it.contentFingerprint() })
+
+    @Test
+    fun addQuestionLeavesCatalogEqualToContent() = runTest {
+        val storage = InMemoryTextStorage()
+        JsonBankRepository(storage).save(bank().copy(localeCoverage = listOf(LocaleCoverage("zh-Hans", 1, 1))))
+
+        assertEquals(AddQuestionResult.Added, JsonBankRepository(storage).addQuestion("b1", extra("q2")))
+
+        val reloaded = assertNotNull(JsonBankRepository(storage).find("b1"))
+        assertEquals(2, reloaded.questionCount, "目录里的题数要跟着变")
+        assertEquals(
+            mapOf(QuestionType.SINGLE_CHOICE to 1, QuestionType.SHORT_ANSWER to 1),
+            reloaded.typeBreakdown(),
+            "题型分布也要跟着变",
+        )
+        assertEquals(2, reloaded.contentRevision, "内容变了，内容版本加一")
+        assertEquals(
+            catalogFingerprintOf(reloaded),
+            reloaded.fingerprint,
+            "目录里的指纹必须等于实际内容 —— 增量累加那一步不能算错",
+        )
+        assertEquals(Fingerprint.CURRENT_VERSION, reloaded.fingerprintVersion)
+        assertEquals(listOf("q1", "q2"), reloaded.questions.map { it.questionId })
+        assertEquals(2, reloaded.coverageOf("zh-Hans").covered)
+        assertEquals(2, reloaded.coverageOf("zh-Hans").total)
+    }
+
+    @Test
+    fun addQuestionWithAnExistingIdWritesNothing() = runTest {
+        val storage = InMemoryTextStorage()
+        JsonBankRepository(storage).save(bank())
+        val catalogBefore = storage.read(BANKS_FILE)
+
+        assertEquals(AddQuestionResult.DuplicateId, JsonBankRepository(storage).addQuestion("b1", extra("q1")))
+
+        assertEquals(catalogBefore, storage.read(BANKS_FILE), "被拒绝的追加不该留下半个目录更新")
+        assertEquals(1, assertNotNull(JsonBankRepository(storage).find("b1")).questionCount)
+    }
+
+    @Test
+    fun addQuestionOnlyRejectsAnExactIdMatch() = runTest {
+        val storage = InMemoryTextStorage()
+        JsonBankRepository(storage).save(bank())
+
+        // "q1x" 与已有 id "q1" 前缀相同：子串预筛要是直接当判据，就会把新题误报成重复
+        assertEquals(AddQuestionResult.Added, JsonBankRepository(storage).addQuestion("b1", extra("q1x")))
+        assertEquals(2, assertNotNull(JsonBankRepository(storage).find("b1")).questionCount)
+    }
+
+    @Test
+    fun addQuestionToAMissingBankDoesNotCreateOne() = runTest {
+        val storage = InMemoryTextStorage()
+
+        assertEquals(AddQuestionResult.BankMissing, JsonBankRepository(storage).addQuestion("nope", extra("q2")))
+
+        assertTrue(JsonBankRepository(storage).list().isEmpty(), "加题不能凭空造出一个题库")
+        assertNull(storage.read(questionFileOf("nope")))
+    }
+
+    @Test
+    fun addQuestionDoesNotTouchOtherBanks() = runTest {
+        val storage = InMemoryTextStorage()
+        val repository = JsonBankRepository(storage)
+        repository.save(bank())
+        repository.save(bank().copy(bankId = "b2", title = "另一个题库"))
+        val otherBefore = storage.read(questionFileOf("b2"))
+
+        repository.addQuestion("b1", extra("q2"))
+
+        assertEquals(otherBefore, storage.read(questionFileOf("b2")), "另一个库的题目文件一个字节都不该动")
+        val other = assertNotNull(JsonBankRepository(storage).find("b2"))
+        assertEquals(1, other.questionCount)
+        assertEquals(1, other.contentRevision, "别的库的内容版本也不该变")
+    }
+
+    @Test
+    fun addQuestionOnALegacyCatalogUpgradesTheFingerprintOnce() = runTest {
+        val storage = InMemoryTextStorage()
+        JsonBankRepository(storage).save(bank())
+
+        // 把目录改回升级前的样子：首版算法算出的值，且没有 fingerprintVersion 字段
+        val legacyValue = Fingerprint.legacyOfQuestions(listOf(question.contentFingerprint()))
+        val legacyMeta = BankMetaDto(
+            bankId = "b1",
+            title = "测试题库",
+            sourceLocale = "zh-Hans",
+            importedAtMillis = 100,
+            sourceLabel = "test",
+            fingerprint = legacyValue,
+            questionCount = 1,
+            typeCounts = mapOf(QuestionType.SINGLE_CHOICE.wireName to 1),
+        )
+        storage.write(
+            BANKS_FILE,
+            storageJson.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = listOf(legacyMeta))),
+        )
+        assertEquals(
+            Fingerprint.LEGACY_VERSION,
+            assertNotNull(JsonBankRepository(storage).find("b1")).fingerprintVersion,
+            "老目录里没有这个字段，读回来就该是首版",
+        )
+
+        assertEquals(AddQuestionResult.Added, JsonBankRepository(storage).addQuestion("b1", extra("q2")))
+
+        val upgraded = assertNotNull(JsonBankRepository(storage).find("b1"))
+        assertEquals(Fingerprint.CURRENT_VERSION, upgraded.fingerprintVersion, "写过一次之后目录里就是新算法的值")
+        assertEquals(catalogFingerprintOf(upgraded), upgraded.fingerprint)
+        assertEquals(2, upgraded.questionCount)
+    }
+
+    @Test
+    fun addQuestionGrowsLocaleCoverageTheSameWayAFullRewriteWould() = runTest {
+        val storage = InMemoryTextStorage()
+        val english = QuestionText(locale = "en", promptMarkdown = "Prompt", explanationMarkdown = "Because.")
+        JsonBankRepository(storage).save(
+            bank().copy(
+                questions = listOf(question.copy(translations = mapOf("en" to english))),
+                localeCoverage = listOf(LocaleCoverage("zh-Hans", 1, 1), LocaleCoverage("en", 1, 1)),
+            ),
+        )
+
+        JsonBankRepository(storage).addQuestion("b1", extra("q2")) // 只有中文
+
+        val reloaded = assertNotNull(JsonBankRepository(storage).find("b1"))
+        assertEquals(2, reloaded.coverageOf("zh-Hans").covered)
+        assertEquals(2, reloaded.coverageOf("zh-Hans").total)
+        assertEquals(1, reloaded.coverageOf("en").covered, "新题没有英文，英文的已覆盖数不该加")
+        assertEquals(2, reloaded.coverageOf("en").total, "但总数要跟着涨，否则覆盖率会算成 1/1")
+    }
+
+    @Test
+    fun addQuestionIntroducesANewLocaleIntoTheCatalog() = runTest {
+        val storage = InMemoryTextStorage()
+        JsonBankRepository(storage).save(
+            bank().copy(localeCoverage = listOf(LocaleCoverage("zh-Hans", 1, 1))),
+        )
+        val english = QuestionText(locale = "en", promptMarkdown = "Second", answerText = "answer")
+
+        JsonBankRepository(storage).addQuestion("b1", extra("q2").copy(translations = mapOf("en" to english)))
+
+        val reloaded = assertNotNull(JsonBankRepository(storage).find("b1"))
+        assertTrue("en" in reloaded.availableLocales, "新题带来了目录里没记过的语言，它该出现在可选语言里")
+        assertEquals(1, reloaded.coverageOf("en").covered)
+        assertEquals(2, reloaded.coverageOf("en").total)
+        assertEquals(2, reloaded.coverageOf("zh-Hans").covered)
+    }
+
+    @Test
+    fun incrementalFingerprintEqualsTheWholeTableOne() {
+        val parts = listOf("a", "b", "c")
+
+        val whole = Fingerprint.ofQuestions(parts)
+        val incremental = parts.fold("") { acc, part -> Fingerprint.plus(acc, part) }
+
+        assertEquals(whole, incremental, "逐项累加必须与整表算法逐位相同")
+        assertEquals(whole, Fingerprint.ofQuestions(parts.reversed()), "指纹与题目顺序无关")
+        assertNotEquals(whole, Fingerprint.ofQuestions(parts + "d"))
+        // 首版算法的公式必须原样保留：用户设备上还躺着那样算出来的值，改了就再也认不出来
+        assertEquals(Fingerprint.of(parts.sorted().joinToString("\u0000")), Fingerprint.legacyOfQuestions(parts))
+    }
 }

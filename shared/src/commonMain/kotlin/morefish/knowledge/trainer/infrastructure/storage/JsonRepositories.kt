@@ -5,6 +5,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import morefish.knowledge.trainer.application.port.AddQuestionResult
 import morefish.knowledge.trainer.application.port.AttemptRepository
 import morefish.knowledge.trainer.application.port.BankRepository
 import morefish.knowledge.trainer.application.port.GraphRepository
@@ -18,6 +19,7 @@ import morefish.knowledge.trainer.domain.graph.KnowledgeGraph
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.graph.validate
 import morefish.knowledge.trainer.domain.i18n.LocaleCoverage
+import morefish.knowledge.trainer.domain.i18n.LocaleTag
 import morefish.knowledge.trainer.domain.model.AttemptRecord
 import morefish.knowledge.trainer.domain.model.Fingerprint
 import morefish.knowledge.trainer.domain.model.GradingSpec
@@ -100,17 +102,76 @@ class JsonBankRepository(
 
     override suspend fun findByFingerprint(fingerprint: String): QuestionBank? {
         if (fingerprint.isBlank()) return null
-        return list().firstOrNull { it.fingerprint == fingerprint }
+        val metas = list()
+        metas.firstOrNull { it.fingerprint == fingerprint }?.let { return it }
+        // 没命中：可能是"升级前按首版算法写下的值"在找自己（老补丁的 baseFingerprint 就是那种值）。
+        // 旧值只有重新算一遍才比得上 —— 这条只在未命中时走，不会拖慢首页与题库列表。
+        return metas.firstOrNull { bank ->
+            if (bank.fingerprintVersion >= Fingerprint.CURRENT_VERSION) return@firstOrNull false
+            val parts = bank.questions.map { it.contentFingerprint() }
+            Fingerprint.legacyOfQuestions(parts) == fingerprint || Fingerprint.ofQuestions(parts) == fingerprint
+        }
     }
 
     override suspend fun save(bank: QuestionBank) {
         mutex.withLock {
             val catalog = readCatalogLocked()
             val written = writeQuestionsLocked(bank.bankId, bank.questions)
-            val meta = bank.toMeta(written)
-            val next = catalog.filterNot { it.bankId == bank.bankId } + meta
-            storage.write(BANKS_FILE, json.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = next)))
+            writeCatalogLocked(catalog.filterNot { it.bankId == bank.bankId } + bank.toMeta(written))
         }
+    }
+
+    /**
+     * 追加一道题：**只写一行 + 更新目录**，不重写整库。
+     *
+     * 与 [save] 的差别全在代价上。十万题的库上，`save(bank.copy(questions = +1))` 要
+     * 先把整库读回来（解析 49.9MB、峰值 106MB）、再整份写回去；而这道题本身只有 512 字节。
+     * 这条路径只在"库里已有、id 不重复"时生效，两条前置检查都不解析整库：
+     *
+     * - 库在不在：只看目录；
+     * - id 重不重：扫一遍题目文件做子串预筛，**只解码命中的那几行**（不是整库解析）。
+     *
+     * 剩下那一次整库解析只出现在"目录里的指纹还是首版算法"的老库上：新指纹要靠累加得到，
+     * 而老值不能累加 —— 所以那种库第一次追加走一次整库重写（顺便把目录升到新版），之后就是增量。
+     */
+    override suspend fun addQuestion(bankId: String, question: Question): AddQuestionResult = mutex.withLock {
+        val catalog = readCatalogLocked()
+        val meta = catalog.firstOrNull { it.bankId == bankId } ?: return@withLock AddQuestionResult.BankMissing
+
+        if (questionIdExistsLocked(questionFileOf(bankId), question.questionId)) {
+            return@withLock AddQuestionResult.DuplicateId
+        }
+
+        val rest = catalog.filterNot { it.bankId == bankId }
+
+        if (meta.fingerprintVersion < Fingerprint.CURRENT_VERSION) {
+            // 老库：必须看见全部题目才能把指纹换成新版。这一次整库重写是升级成本，不是日常成本。
+            val questions = readQuestions(bankId) + question
+            val written = writeQuestionsLocked(bankId, questions)
+            writeCatalogLocked(rest + meta.copy(
+                contentRevision = meta.contentRevision + 1,
+                fingerprint = written.fingerprint,
+                fingerprintVersion = written.fingerprintVersion,
+                questionCount = written.count,
+                typeCounts = written.typeCounts,
+                locales = grownLocales(meta.locales, question, meta.sourceLocale, written.count),
+            ))
+            return@withLock AddQuestionResult.Added
+        }
+
+        storage.appendLine(
+            questionFileOf(bankId),
+            questionJson.encodeToString(QuestionDto.serializer(), question.toDto()),
+        )
+        val nextCount = meta.questionCount + 1
+        writeCatalogLocked(rest + meta.copy(
+            contentRevision = meta.contentRevision + 1,
+            fingerprint = Fingerprint.plus(meta.fingerprint, question.contentFingerprint()),
+            questionCount = nextCount,
+            typeCounts = meta.typeCounts + (question.type.wireName to (meta.typeCounts[question.type.wireName] ?: 0) + 1),
+            locales = grownLocales(meta.locales, question, meta.sourceLocale, nextCount),
+        ))
+        AddQuestionResult.Added
     }
 
     /**
@@ -125,8 +186,7 @@ class JsonBankRepository(
     override suspend fun delete(bankId: String): Boolean = mutex.withLock {
         val catalog = readCatalogLocked()
         if (catalog.none { it.bankId == bankId }) return@withLock false
-        val next = catalog.filterNot { it.bankId == bankId }
-        storage.write(BANKS_FILE, json.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = next)))
+        writeCatalogLocked(catalog.filterNot { it.bankId == bankId })
         storage.delete(questionFileOf(bankId))
         true
     }
@@ -253,7 +313,7 @@ class JsonBankRepository(
             )
         }
         // 题目文件都已落地，才写目录 —— 目录就是这次迁移的提交点
-        storage.write(BANKS_FILE, json.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = metas)))
+        writeCatalogLocked(metas)
         warnings = listOf("题库存储已升级为「目录 + 每库独立文件」（共 ${metas.size} 个库），旧文件已转换")
         return metas
     }
@@ -277,6 +337,31 @@ class JsonBankRepository(
 
     // ---- 写 ----
 
+    private fun writeCatalogLocked(banks: List<BankMetaDto>) {
+        storage.write(BANKS_FILE, json.encodeToString(BankCatalogDto.serializer(), BankCatalogDto(banks = banks)))
+    }
+
+    /**
+     * 这个 id 在题目文件里出现过吗。
+     *
+     * 分两段：先对整个文本做**一次**原生子串扫描（50MB 十几毫秒），没命中就收工；
+     * 命中了才逐行去看，且只解码命中的那几行 —— 整库解析十万题是 800ms 级，
+     * 而逐行 `contains` 也有一百毫秒级，都远贵于"扫一遍字节"。
+     *
+     * 子串预筛用带引号的 id，与 [locate] 是同一套判断：不带引号的话，`q1` 会命中 `q1x`。
+     */
+    private fun questionIdExistsLocked(file: String, questionId: String): Boolean {
+        val raw = storage.read(file) ?: return false
+        if (raw.isEmpty()) return false
+        val needle = "\"$questionId\""
+        if (!raw.contains(needle)) return false
+        return raw.lineSequence().any { line ->
+            line.contains(needle) && runCatching {
+                questionJson.decodeFromString(QuestionDto.serializer(), line).questionId == questionId
+            }.getOrDefault(false)
+        }
+    }
+
     /**
      * 返回实际写入的条数、题型分布与**内容指纹**；这三个值随后进目录。
      *
@@ -285,23 +370,22 @@ class JsonBankRepository(
      * 后果不是界面显示错误 —— 而是 `ImportBankUseCase` 拿它判断"这个库是不是导入过"，
      * 从这一刻起就会答错（把改过的库当成原包）。
      *
-     * 代价是每次写库都要把十万道题的内容再哈希一遍（O(n)）；这一点在
-     * `docs/STATUS-P10.md` 的存储基线里有实测数字 —— SQLite 那一层也躲不掉它，
-     * 想做到 O(1) 就得把"整库指纹"换成增量结构，那是另一件事。
+     * 边序列化边累加（[Fingerprint.Accumulator]），不再先攒一个十万条指纹的列表再排序：
+     * 那样既能省掉一次排序，也让"追加一道题"有办法只更新这个累加值（见 [addQuestion]）。
      */
     private fun writeQuestionsLocked(bankId: String, questions: List<Question>): WrittenQuestions {
         val builder = StringBuilder()
         val counts = mutableMapOf<String, Int>()
-        val parts = ArrayList<String>(questions.size)
+        val fingerprint = Fingerprint.Accumulator()
         var written = 0
         questions.forEach { question ->
             builder.append(questionJson.encodeToString(QuestionDto.serializer(), question.toDto())).append('\n')
-            parts += question.contentFingerprint()
+            fingerprint.add(question.contentFingerprint())
             counts[question.type.wireName] = (counts[question.type.wireName] ?: 0) + 1
             written++
         }
         storage.write(questionFileOf(bankId), builder.toString())
-        return WrittenQuestions(written, counts, Fingerprint.ofQuestions(parts))
+        return WrittenQuestions(written, counts, fingerprint.value(), Fingerprint.CURRENT_VERSION)
     }
 
     private companion object {
@@ -388,6 +472,8 @@ internal class WrittenQuestions(
     val count: Int,
     val typeCounts: Map<String, Int>,
     val fingerprint: String,
+    /** 这串指纹是按哪一版算法算的，一起写进目录。 */
+    val fingerprintVersion: Int,
 )
 
 private fun QuestionBank.toMeta(written: WrittenQuestions): BankMetaDto = BankMetaDto(
@@ -398,6 +484,7 @@ private fun QuestionBank.toMeta(written: WrittenQuestions): BankMetaDto = BankMe
     sourceLabel = sourceLabel,
     contentRevision = contentRevision,
     fingerprint = written.fingerprint,
+    fingerprintVersion = written.fingerprintVersion,
     questionCount = written.count,
     typeCounts = written.typeCounts,
     provenance = provenance.toDto(),
@@ -434,8 +521,7 @@ internal fun Question.toDto(): QuestionDto = QuestionDto(
     sourceLocator = sourceLocator,
 )
 
-/** 目录条目 → 领域对象。题目先不读，等真正要题面时再读。 */
-private fun BankMetaDto.toDomain(loadQuestions: () -> List<Question>): QuestionBank = QuestionBank(
+/** 目录条目 → 领域对象。题目先不读，等真正要题面时再读。 */private fun BankMetaDto.toDomain(loadQuestions: () -> List<Question>): QuestionBank = QuestionBank(
     bankId = bankId,
     title = title,
     sourceLocale = sourceLocale,
@@ -444,6 +530,7 @@ private fun BankMetaDto.toDomain(loadQuestions: () -> List<Question>): QuestionB
     sourceLabel = sourceLabel,
     contentRevision = contentRevision,
     fingerprint = fingerprint,
+    fingerprintVersion = fingerprintVersion,
     typeCounts = typeCounts.mapNotNull { (wire, count) -> QuestionType.fromWire(wire)?.let { it to count } }
         .toMap()
         .takeIf { it.isNotEmpty() },
@@ -453,6 +540,39 @@ private fun BankMetaDto.toDomain(loadQuestions: () -> List<Question>): QuestionB
         .takeIf { it.isNotEmpty() },
     provenance = provenance.toDomain(),
 )
+
+/**
+ * 追加一道题之后的语言覆盖度。
+ *
+ * 必须与"整库重算一遍"等价：每个已知语言的 total 都 +1，只有那一道题真有这个语言的
+ * 译文时 covered 才 +1；这题若带来了目录里没记过的新语言，补一条。
+ *
+ * 空列表原样返回 —— 老目录没有这一段，那代表"只有源语言"，不能凭空造出一排 0。
+ */
+private fun grownLocales(
+    current: List<LocaleCoverageDto>,
+    question: Question,
+    sourceLocale: String,
+    newTotal: Int,
+): List<LocaleCoverageDto> {
+    if (current.isEmpty()) return current
+    val inline = question.locale?.takeIf { it.isNotBlank() } ?: sourceLocale
+    val source = normalizeLocale(inline)
+    val has = (question.translations.keys.map(::normalizeLocale) + source).toSet()
+    val known = current.mapTo(mutableSetOf()) { normalizeLocale(it.locale) }
+
+    val grown = current.map { dto ->
+        val locale = normalizeLocale(dto.locale)
+        dto.copy(covered = if (locale in has) dto.covered + 1 else dto.covered, total = newTotal)
+    }
+    val added = has.filterNot { it in known }.sorted().map { locale ->
+        // 源语言是原文本身，新加一道源语言的题它就一定覆盖
+        LocaleCoverageDto(locale, if (locale == source) newTotal else 1, newTotal)
+    }
+    return grown + added
+}
+
+private fun normalizeLocale(tag: String): String = LocaleTag.parse(tag)?.value ?: tag
 
 private fun ProvenanceDto.toDomain(): BankProvenance = BankProvenance(
     sources = sources.map {

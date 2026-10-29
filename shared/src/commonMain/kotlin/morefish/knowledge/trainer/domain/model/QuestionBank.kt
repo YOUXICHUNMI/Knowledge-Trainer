@@ -22,6 +22,14 @@ data class QuestionBank(
     val contentRevision: Int = 1,
     val fingerprint: String = Fingerprint.ofQuestions(questions.map { it.contentFingerprint() }),
     /**
+     * [fingerprint] 是按哪一版算法算的。
+     *
+     * 它跟着值走，不跟着代码走：从磁盘读回来的老库带着 [Fingerprint.LEGACY_VERSION]，
+     * 拿它去和"现算的指纹"直接比会得出"内容不同"的错误结论 —— 调用方必须先看这个数，
+     * 决定要不要按老算法重算一遍（见 `ImportBankUseCase`）。
+     */
+    val fingerprintVersion: Int = Fingerprint.CURRENT_VERSION,
+    /**
      * 从目录里读到的题型分布。为 null 表示"还没算过"，此时 [typeBreakdown] 现算。
      *
      * 有了它，首页画题库卡不必把十万道题从磁盘解析一遍 —— 分布是入库时算好写进目录的。

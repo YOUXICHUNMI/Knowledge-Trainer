@@ -366,7 +366,7 @@ KT-QBF 从一开始就规定了 `locales/<BCP47>/questions.ndjson` 的分层，�
 |---|---|---|
 | KT-QBP 1.0 容器 | ✅ | `knowledge-trainer-bank-patch`：`manifest.json`（含 `baseRevision` / `targetRevision` / `baseFingerprint` / `patchId` / 可选 `title`） + `operations` 数组 + 可选媒体。与 `.qbank` / `.qbext` 同一套"清单 ↔ 条目双向 sha256"纪律，错一条整包拒绝 |
 | 制包工具（零依赖） | ✅ | `tools/qbank/qbpatch.py build / validate / fingerprint`。`build --base old.qbank` 从**旧包**算锚点并给每条操作补 `expect`；作者不用手写任何指纹。示例产物 `examples/starter-v2.qbpatch`（v2.0.0，第 1 版 → 第 2 版，新增 1 / 修改 2 / 删除 0） |
-| 指纹两侧同源 | ✅ | `ktqbf/fingerprint.py` 逐字节复刻 Kotlin 的 FNV-1a 64（16 位十六进制），只做这一件事；`FingerprintParityTest` 用 golden 值锁住两侧（`fe59fc0696f2f5c9` / `q001=7a946af22e6b29e0` 等）。**当初把它写成 64 位十六进制，工具算出的指纹被自己拒绝**，是这条测试之后才不再复发 |
+| 指纹两侧同源 | ✅ | `ktqbf/fingerprint.py` 逐字节复刻 Kotlin 的算法（FNV-1a 64，16 位十六进制；题目集合指纹是**逐项相加**模 2^64，见 P10 第 21 节），只做这一件事；`FingerprintParityTest` 用 golden 值锁住两侧（`827015e596399cd3` / `q001=7a946af22e6b29e0` 等）。**当初把它写成 64 位十六进制，工具算出的指纹被自己拒绝**，是这条测试之后才不再复发 |
 | 两个锚点 | ✅ | 库级 `baseFingerprint`（整库内容指纹，即"哪一版"）+ 题级 `expect`（该题当时的指纹，即"你手里那条还是我改的那条吗"）。库级锚点回答"要不要改"，题级锚点回答"能不能改" |
 | 读取器 | ✅ | `QbpatchImporter`：`op` 白名单（add / update / remove）、同一题只能有一条操作、`update` 的 `set` 只允许 8 个字段、`add` 的新题必须过 `QuestionRules`（多选题一个答案这种当场拦下） |
 | 纯函数应用器 | ✅ | `BankPatcher.apply(bank, patch)` 无 IO、无副作用，返回 `Ok / NoOp / Outdated / Failed`。合并后**再复检一次**整题合法性 —— 改完变成"多选题只剩一个答案"的补丁会被拒绝，而不是写进题库 |

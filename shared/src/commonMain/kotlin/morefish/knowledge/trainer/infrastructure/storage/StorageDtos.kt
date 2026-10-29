@@ -42,6 +42,14 @@ internal data class BankMetaDto(
     val sourceLabel: String,
     val contentRevision: Int = 1,
     val fingerprint: String = "",
+    /**
+     * [fingerprint] 是按哪一版算法算的。缺省 1 = 首版（排序拼接）——
+     * 老目录里没有这个字段，读回来就是 1。
+     *
+     * 它决定两件事：比对时要不要按老算法重算（[morefish.knowledge.trainer.domain.model.Fingerprint.LEGACY_VERSION]），
+     * 以及"追加一道题"能不能走增量（只有 2 才谈得上增量，1 必须先看见全部题目才能算出新指纹）。
+     */
+    val fingerprintVersion: Int = 1,
     /** 题目条数。首页与列表用它，不必解析题目文件。 */
     val questionCount: Int = 0,
     /** 题型分布，wireName → 条数。 */

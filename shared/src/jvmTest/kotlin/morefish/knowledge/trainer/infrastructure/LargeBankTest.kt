@@ -1,6 +1,7 @@
 package morefish.knowledge.trainer.infrastructure
 
 import kotlinx.coroutines.test.runTest
+import morefish.knowledge.trainer.application.port.AddQuestionResult
 import morefish.knowledge.trainer.application.port.TextStorage
 import morefish.knowledge.trainer.domain.graph.QuestionRef
 import morefish.knowledge.trainer.domain.model.Fingerprint
@@ -128,10 +129,12 @@ class LargeBankTest {
     /**
      * 日常写操作的代价：在十万题的库上加**一道**题，会牵动整库。
      *
-     * 走的不是合成路径，就是用户点「保存」的那条：
-     * `QuestionEditorController.add()` = `find(bankId)` → `bank.questions + question` → `save(...)`。
+     * 拆的是"用 `save` 加一道题"那条老路的成本：`find(bankId)` → `bank.questions + question` → `save(...)`。
      * 其中 `bank.questions` 是按需解析的，取第一道题就整库解析（十万个对象）；
-     * `save()` 又把整库重新序列化写一遍（约 50MB）。所以"加一道 400 字节的题"= 整库读 + 整库写。
+     * `save()` 又把整库重新序列化写一遍（约 50MB）。所以"加一道 512 字节的题"= 整库读 + 整库写。
+     *
+     * `QuestionEditorController` 现在已经改走 `addQuestion`（见下面那条），这条留着当**对照组**：
+     * 改完之后取一道题、搜一个词、改一道题仍然是这个代价 —— 那是 P11 剩下的活。
      *
      * 拆成几段单独量，是因为 P11 的 SQLite 要解决的正是**每一段各自**的问题：
      * 取一道题该变成 O(log n)、写一道题该变成"只写一行"。这里量到的数字是那件事的对照组。
@@ -205,9 +208,98 @@ class LargeBankTest {
         print(mark.render())
         val lineBytes = questionsFile.readLines().last().toByteArray().size
         println(
-            "新增一行 ${lineBytes} 字节，为它重写了 ${questionsFile.length() / 1024} KB" +
+            "新增一行 $lineBytes 字节，为它整库重写了 ${questionsFile.length() / 1024} KB" +
                 "（${(questionsFile.length().toDouble() / lineBytes).toInt()} 倍）",
         )
+    }
+
+    /**
+     * 同一件事的另一条路：[BankRepository.addQuestion] —— 只写一行。
+     *
+     * 上面那条量的是 `save(整库重写)`，它必须先读回整库（十万个对象、103MB）；
+     * 这条量的是"库已经在那儿了，再往末尾加一道"。
+     *
+     * 判据是**写盘字节数**，不是文件长度：整库重写之后文件只多出一行，长度差看不出重写，
+     * 只有"这次到底写进去多少字节"才看得出。所以套一个计数的 [TextStorage]。
+     */
+    @Test
+    fun appendingOneQuestionWritesOneLineNotTheWholeBank() = runTest {
+        val root = createTempDir("kt-large-bank-append")
+        val files = FileTextStorage(root)
+        importAndSave(target, files, root, Mark("unused"))
+        val questionsFile = File(root, questionFileOf("bench-bank"))
+        val bankBytes = questionsFile.length()
+        val storage = CountingStorage(files)
+        val mark = Mark("large-bank-append-report.txt")
+        val repository = JsonBankRepository(storage)
+
+        val repeats = 5
+        val started = System.nanoTime()
+        repeat(repeats) { i ->
+            val extra = Question(
+                questionId = "q-append-$i",
+                type = QuestionType.SINGLE_CHOICE,
+                promptMarkdown = "第 $i 道手工新建的题：以下说法正确的是？",
+                options = listOf(QuestionOption("A", "选项甲"), QuestionOption("B", "选项乙")),
+                correctOptionIds = setOf("B"),
+            )
+            assertEquals(AddQuestionResult.Added, repository.addQuestion("bench-bank", extra))
+        }
+        val avgMs = (System.nanoTime() - started) / 1_000_000 / repeats
+        val written = storage.writtenBytes
+        mark.record("追加一道题 ×$repeats（只写一行 + 更新目录）", written / repeats, avgMs)
+
+        val reloaded = JsonBankRepository(storage).list().single()
+        assertEquals(target + repeats, reloaded.questionCount, "目录里的题数要跟着变")
+        assertEquals("q-append-${repeats - 1}", reloaded.questions.last().questionId)
+        assertEquals(
+            Fingerprint.ofQuestions(reloaded.questions.map { it.contentFingerprint() }),
+            reloaded.fingerprint,
+            "增量累加出来的指纹必须等于整库重算的结果",
+        )
+
+        // 写盘量：只该是这几行加几次目录，与库有多大无关。
+        // 一旦实现退化成"读出来改完再整库写回"，这里会立刻变成整个文件的大小。
+        val lineBytes = questionsFile.readLines().last().toByteArray().size
+        val budget = (lineBytes + 2) * repeats + 8 * 1024 // 8KB 余量给目录那几次小写入
+        assertTrue(
+            written < budget,
+            "追加 $repeats 道题只该写约 ${lineBytes * repeats} 字节（加目录），实际写了 $written 字节" +
+                "（整个库才 $bankBytes 字节）",
+        )
+
+        mark.dump()
+        print(mark.render())
+        println(
+            "库 $bankBytes 字节；追加 $repeats 道题共写盘 $written 字节（每题 ${written / repeats}，行均 $lineBytes），" +
+                "平均 ${avgMs}ms/题",
+        )
+    }
+
+    /**
+     * 量"这次到底写了多少字节"的装饰器。
+     *
+     * 用它而不是比较文件长度：整库重写之后文件也只多一行，长度差分辨不出重写与追加。
+     */
+    private class CountingStorage(private val delegate: TextStorage) : TextStorage {
+        var writtenBytes = 0L
+            private set
+
+        override val isPersistent: Boolean get() = delegate.isPersistent
+
+        override fun read(name: String): String? = delegate.read(name)
+
+        override fun write(name: String, content: String) {
+            writtenBytes += content.encodeToByteArray().size
+            delegate.write(name, content)
+        }
+
+        override fun appendLine(name: String, line: String) {
+            writtenBytes += line.encodeToByteArray().size + 1
+            delegate.appendLine(name, line)
+        }
+
+        override fun delete(name: String): Boolean = delegate.delete(name)
     }
 
     // ---- 造数据 ----
@@ -265,14 +357,19 @@ class LargeBankTest {
         private val rows = mutableListOf<String>()
         private var lastAt = System.nanoTime()
 
-        fun record(step: String, bytes: Long) {
-            val ms = (System.nanoTime() - lastAt) / 1_000_000
+        /** [elapsedOverrideMs] 用于「这一步自己已经量过了」的情形（例如循环 N 次取平均）。 */
+        fun record(step: String, bytes: Long, elapsedOverrideMs: Long? = null) {
+            val ms = elapsedOverrideMs ?: ((System.nanoTime() - lastAt) / 1_000_000)
             val heap = usedHeapMb()
-            rows += "| $step | ${ms}ms | ${bytes / 1024} KB | ${heap} MB |"
+            rows += "| $step | ${ms}ms | ${formatBytes(bytes)} | ${heap} MB |"
             // 量堆时强制 GC 了，它的时间不该算到下一步头上，
             // 否则"只读目录"会被算成两百毫秒
             lastAt = System.nanoTime()
         }
+
+        /** 小于 1KB 时按字节显示：追加一道题只增长几百字节，写成 "0 KB" 等于说"没写盘"。 */
+        private fun formatBytes(bytes: Long): String =
+            if (bytes < 1024) "$bytes B" else "${bytes / 1024} KB"
 
         fun render(): String = buildString {
             appendLine()

@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import morefish.knowledge.trainer.application.port.AddQuestionResult
 import morefish.knowledge.trainer.application.port.BankRepository
 import morefish.knowledge.trainer.domain.model.Question
 import morefish.knowledge.trainer.domain.model.QuestionBank
@@ -70,6 +71,11 @@ class QuestionEditorController(
     /**
      * 手工新建题目（个人扩展）。校验 fail-closed：有任何 ERROR 就不落盘。
      * 题库 contentRevision 递增，题目按现状追加，历史不动。
+     *
+     * 落盘走 [BankRepository.addQuestion] 而不是"读出来 copy 一份再 save"：
+     * 后者要把整库读进内存（十万题的库是 113MB、约 1 秒）只为加一行。
+     * "id 会不会重复"也交给存储层 —— 那边只用扫一遍文本、只解码命中的那几行；
+     * 这里如果在控制器里 `bank.questions.any { … }`，光是这一句就会把十万题全解析一遍。
      */
     fun add(bankId: String, question: Question) {
         val errors = question.validate().filter { it.severity == Severity.ERROR }
@@ -78,31 +84,32 @@ class QuestionEditorController(
 
         scope.launch {
             busy = true
-            val bank = repository.find(bankId)
-            if (bank == null) {
-                busy = false
-                issues = listOf(
-                    ValidationIssue(Severity.ERROR, "bank-missing", "题库不存在或已被删除"),
-                )
-                return@launch
+            when (repository.addQuestion(bankId, question)) {
+                AddQuestionResult.Added -> {
+                    saved = true
+                    issues = emptyList()
+                }
+
+                AddQuestionResult.BankMissing -> {
+                    saved = false
+                    issues = listOf(
+                        ValidationIssue(Severity.ERROR, "bank-missing", "题库不存在或已被删除"),
+                    )
+                }
+
+                AddQuestionResult.DuplicateId -> {
+                    saved = false
+                    issues = listOf(
+                        ValidationIssue(
+                            Severity.ERROR,
+                            "duplicate-id",
+                            "题目 ID ${question.questionId} 已存在，请换一个",
+                        ),
+                    )
+                }
             }
-            if (bank.questions.any { it.questionId == question.questionId }) {
-                busy = false
-                issues = listOf(
-                    ValidationIssue(Severity.ERROR, "duplicate-id", "题目 ID ${question.questionId} 已存在，请换一个"),
-                )
-                return@launch
-            }
-            repository.save(
-                bank.copy(
-                    questions = bank.questions + question,
-                    contentRevision = bank.contentRevision + 1,
-                ),
-            )
             busy = false
-            saved = true
-            issues = emptyList()
-            onBankChanged()
+            if (saved) onBankChanged()
         }
     }
 }

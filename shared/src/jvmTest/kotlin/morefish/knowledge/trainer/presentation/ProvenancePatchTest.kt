@@ -73,7 +73,7 @@ class ProvenancePatchTest {
             {"schemaVersion":"1.0.0","format":"knowledge-trainer-bank-patch",
              "patchId":"prov-only","version":"2.0.0","name":"补出处",
              "bankId":"$bank","baseRevision":1,"targetRevision":$revision,
-             "baseFingerprint":"fe59fc0696f2f5c9",
+             "baseFingerprint":"827015e596399cd3",
              "operations":[{"op":"update","questionId":"q003","expect":"$expect",
                "set":{"origin":"adapted","sourceId":"marx-textbook","sourceLocator":"第二章 第一节"}}],
              "files":[]}
@@ -167,7 +167,7 @@ class ProvenancePatchTest {
             {"schemaVersion":"1.0.0","format":"knowledge-trainer-bank-patch",
              "patchId":"prov-clear","version":"2.1.0","name":"撤掉出处",
              "bankId":"$bank","baseRevision":2,"targetRevision":3,
-             "baseFingerprint":"fe59fc0696f2f5c9",
+             "baseFingerprint":"827015e596399cd3",
              "operations":[{"op":"update","questionId":"q003","expect":"${q003Fingerprint()}",
                "set":{"sourceId":"","sourceLocator":"","origin":"authored"}}],
              "files":[]}

@@ -30,7 +30,7 @@ application 不依赖界面、界面只在组合根接触具体实现，已有�
 [docs/STATUS-P10.md](./docs/STATUS-P10.md)。
 
 **回归不再靠人记得跑**：`.github/workflows/ci.yml` 在每次 push / PR 上跑两组必检 ——
-`./gradlew :shared:jvmTest`（665 个用例，含架构验收）与 `python tools/verify/run_all.py`
+`./gradlew :shared:jvmTest`（675 个用例，含架构验收）与 `python tools/verify/run_all.py`
 （坏包 / 扩展包 / 补丁 / 制包 Skill 自检 / 可复现构建 / 样本包校验，共 12 项）。
 清单只维护一份：本地跑的就是 CI 跑的那一条命令。Android 与桌面打包放在手动触发里，
 因为它们的产物不是每天变，却要拉 SDK 与 WiX。
@@ -51,10 +51,12 @@ push 到主分支时还会多跑一个 `screenshots` job：`KT_SHOTS=1` 把 74 �
 碰其他库。NDJSON 是逐行导入的，一行写坏只损失那一行。旧版本的"题目内嵌"格式会在首次读取时
 自动迁移，并在首页横幅告知。
 
-但这套布局的代价也是量出来的，不靠感觉：**取一道题 292ms**（要读整份 49.9MB 再扫）、
-**搜一个词 1289ms**（全表扫描）、**加一道题 ≈ 1.0 秒**（读回整库 + 重写 49.9MB，峰值 106MB）。
-这三个数就是 P11 换 SQLite 的验收起点（目标是 ≤10ms / ≤50ms / ≤50ms），
-口径与三次采样见 [docs/STATUS-P10.md](./docs/STATUS-P10.md) 第 20 节；
+但这套布局的代价也是量出来的，不靠感觉：**取一道题 245ms**（要读整份 49.9MB 再扫）、
+**搜一个词 964ms**（全表扫描）、**改一道题仍是整库重写**（49.9MB）。
+「加一道题」这一条已经单独优化掉了：端口长出 `addQuestion`，指纹换成可增量结构，
+十万题的库上加一题只写 **658 字节**、226ms、7MB —— 而不是重写 49.9MB、占 106MB。
+剩下的两个数就是 P11 换 SQLite 的验收起点（取一道题 ≤10ms、搜一个词 ≤50ms），
+口径与三次采样见 [docs/STATUS-P10.md](./docs/STATUS-P10.md) 第 20、21 节；
 更早的导入/重开数据在 [docs/STATUS-P3.md](./docs/STATUS-P3.md)。
 
 **移除题库**：题库卡片底部「移除题库」（二次确认，就地确认，不弹模态框）。移除会删掉这个库的

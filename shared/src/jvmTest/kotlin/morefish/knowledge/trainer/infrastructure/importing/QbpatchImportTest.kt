@@ -114,7 +114,7 @@ class QbpatchImportTest {
         assertEquals(1, patch.baseRevision)
         assertEquals(2, patch.targetRevision)
         // 与 Python 工具算出来的锚点必须一字不差，否则所有补丁都会变成"版本不符"
-        assertEquals("fe59fc0696f2f5c9", patch.baseFingerprint)
+        assertEquals("827015e596399cd3", patch.baseFingerprint)
 
         assertEquals(3, patch.operations.size)
         assertEquals(1, patch.addedCount)

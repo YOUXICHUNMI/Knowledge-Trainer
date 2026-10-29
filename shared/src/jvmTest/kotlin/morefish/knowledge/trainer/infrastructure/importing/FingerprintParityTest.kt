@@ -51,7 +51,7 @@ class FingerprintParityTest {
         val questions = bank.questions
 
         // golden 值来自 `python qbpatch.py fingerprint examples/starter.qbank`
-        assertEquals("fe59fc0696f2f5c9", Fingerprint.ofQuestions(questions.map { it.contentFingerprint() }))
+        assertEquals("827015e596399cd3", Fingerprint.ofQuestions(questions.map { it.contentFingerprint() }))
         assertEquals(
             listOf(
                 "q001" to "7a946af22e6b29e0",
